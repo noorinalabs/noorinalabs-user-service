@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from src.app.database import close_db, init_db
+from src.app.database import close_db, close_redis, init_db, init_redis
 from src.app.middleware.cors import add_cors_middleware
 from src.app.middleware.security import add_security_headers
 from src.app.routers import (
@@ -22,7 +22,9 @@ from src.app.routers import (
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
+    await init_redis()
     yield
+    await close_redis()
     await close_db()
 
 

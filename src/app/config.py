@@ -47,10 +47,28 @@ class Settings(BaseSettings):
     AUTH_FACEBOOK_APP_ID: str = ""
     AUTH_FACEBOOK_APP_SECRET: str = ""
 
+    # Email verification
+    VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
+    VERIFICATION_RATE_LIMIT_MAX: int = 3
+    VERIFICATION_RATE_LIMIT_WINDOW_MINUTES: int = 60
+    VERIFICATION_BASE_URL: str = "http://localhost:3000"
+
+    # SMTP
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "noreply@noorinalabs.com"
+    SMTP_FROM_NAME: str = "NoorinALabs"
+    SMTP_START_TLS: bool = True
+
     # 2FA / TOTP
     TOTP_ISSUER_NAME: str = "NoorinALabs"
     TOTP_ENCRYPTION_KEY: str = ""  # Fernet key for encrypting TOTP secrets at rest
     TOTP_RECOVERY_CODE_COUNT: int = 8
+
+    # Webhook
+    WEBHOOK_SIGNING_SECRET: str = ""
 
     # OAuth — Redirect base URL
     AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
