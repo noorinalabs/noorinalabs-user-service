@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from src.app.database import close_db, init_db
 from src.app.middleware.cors import add_cors_middleware
 from src.app.middleware.security import add_security_headers
-from src.app.routers import auth, health, sessions, users, well_known
+from src.app.routers import auth, health, roles, sessions, users, well_known
 
 
 @asynccontextmanager
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
     application.include_router(health.router)
     application.include_router(auth.router)
     application.include_router(users.router)
+    application.include_router(roles.router)
     application.include_router(sessions.router)
     application.include_router(well_known.router)
 

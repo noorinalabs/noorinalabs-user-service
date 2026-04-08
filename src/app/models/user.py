@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, String, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+if TYPE_CHECKING:
+    from src.app.models.role import UserRole
 
 
 class Base(DeclarativeBase):
@@ -25,3 +31,7 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user_roles: Mapped[list[UserRole]] = relationship(
+        back_populates="user", foreign_keys="UserRole.user_id"
+    )
