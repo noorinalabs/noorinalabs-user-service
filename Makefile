@@ -10,10 +10,10 @@ setup-hooks:
 
 # Infrastructure
 infra:
-	docker compose up -d
+	docker compose -f docker-compose.dev.yml up -d
 
 infra-down:
-	docker compose down
+	docker compose -f docker-compose.dev.yml down
 
 # Quality
 test:

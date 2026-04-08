@@ -2,31 +2,18 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.app.config import get_settings
+from src.app.database import close_db, init_db
 from src.app.middleware.cors import add_cors_middleware
 from src.app.middleware.security import add_security_headers
-from src.app.routers import auth, health, sessions, users
-
-_async_session_factory: async_sessionmaker[AsyncSession] | None = None
-
-
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    assert _async_session_factory is not None, "Database not initialized"
-    async with _async_session_factory() as session:
-        yield session
+from src.app.routers import auth, health, sessions, users, well_known
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    global _async_session_factory
-    settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
-    _async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await init_db()
     yield
-    await engine.dispose()
-    _async_session_factory = None
+    await close_db()
 
 
 def create_app() -> FastAPI:
@@ -43,6 +30,7 @@ def create_app() -> FastAPI:
     application.include_router(auth.router)
     application.include_router(users.router)
     application.include_router(sessions.router)
+    application.include_router(well_known.router)
 
     return application
 
