@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 from src.app.config import get_settings
+import src.app.models  # ensure all models are registered
 from src.app.models.user import Base
 
 config = context.config
