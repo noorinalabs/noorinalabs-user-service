@@ -67,6 +67,22 @@ async def start_trial(
     return SubscriptionRead.model_validate(sub)
 
 
+@router.delete("/me", response_model=SubscriptionRead)
+async def cancel_my_subscription(
+    current_user: CurrentUserDep,
+    db: DbDep,
+) -> SubscriptionRead:
+    """Cancel the current user's active subscription."""
+    sub = await sub_svc.cancel_subscription(db, current_user.id)
+    if sub is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active subscription to cancel",
+        )
+    await db.commit()
+    return SubscriptionRead.model_validate(sub)
+
+
 @router.get("/{user_id}", response_model=SubscriptionRead)
 async def get_user_subscription(
     user_id: uuid.UUID,
@@ -120,13 +136,19 @@ async def payment_webhook(
         )
 
     body = WebhookEvent.model_validate_json(raw_body)
-    result = await sub_svc.handle_webhook_event(
-        db,
-        user_id=body.user_id,
-        event_type=body.event_type,
-        plan=body.plan,
-        status=body.status,
-    )
+    try:
+        result = await sub_svc.handle_webhook_event(
+            db,
+            user_id=body.user_id,
+            event_type=body.event_type,
+            plan=body.plan,
+            status=body.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     await db.commit()
     if result is None:
         return {"status": "ignored"}

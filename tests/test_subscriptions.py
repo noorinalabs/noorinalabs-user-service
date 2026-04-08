@@ -218,6 +218,7 @@ class TestSubscriptionService:
         cancelled = await sub_svc.cancel_subscription(db_session, regular_user.id)
         assert cancelled is not None
         assert cancelled.status == SubscriptionStatus.cancelled
+        assert cancelled.expires_at is not None
 
     @pytest.mark.asyncio
     async def test_cancel_no_subscription(
@@ -323,6 +324,32 @@ class TestStartTrial:
         assert resp.status_code == 409
 
 
+class TestCancelMySubscription:
+    @pytest.mark.asyncio
+    async def test_cancel_success(
+        self, client: AsyncClient, regular_user: User, db_session: AsyncSession
+    ) -> None:
+        await sub_svc.create_subscription(db_session, regular_user.id, "researcher")
+        await db_session.commit()
+        resp = await client.delete(
+            "/api/v1/subscriptions/me",
+            headers=_auth_header(regular_user),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancelled"
+        assert resp.json()["expires_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_cancel_no_active_subscription(
+        self, client: AsyncClient, regular_user: User
+    ) -> None:
+        resp = await client.delete(
+            "/api/v1/subscriptions/me",
+            headers=_auth_header(regular_user),
+        )
+        assert resp.status_code == 404
+
+
 class TestGetUserSubscription:
     @pytest.mark.asyncio
     async def test_admin_can_view(
@@ -425,6 +452,73 @@ class TestWebhook:
                 "event_type": "subscription.created",
                 "user_id": str(regular_user.id),
                 "plan": "researcher",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_subscription_cancelled(
+        self, client: AsyncClient, regular_user: User, db_session: AsyncSession
+    ) -> None:
+        await sub_svc.create_subscription(
+            db_session, regular_user.id, "researcher"
+        )
+        await db_session.commit()
+        payload = json.dumps({
+            "event_type": "subscription.cancelled",
+            "user_id": str(regular_user.id),
+        }).encode()
+        resp = await client.post(
+            "/api/v1/subscriptions/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": _webhook_signature(payload),
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "processed"
+
+    @pytest.mark.asyncio
+    async def test_subscription_updated(
+        self, client: AsyncClient, regular_user: User, db_session: AsyncSession
+    ) -> None:
+        await sub_svc.create_subscription(
+            db_session, regular_user.id, "researcher"
+        )
+        await db_session.commit()
+        payload = json.dumps({
+            "event_type": "subscription.updated",
+            "user_id": str(regular_user.id),
+            "status": "suspended",
+            "plan": "institutional",
+        }).encode()
+        resp = await client.post(
+            "/api/v1/subscriptions/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": _webhook_signature(payload),
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "processed"
+
+    @pytest.mark.asyncio
+    async def test_webhook_invalid_status_rejected(
+        self, client: AsyncClient, regular_user: User
+    ) -> None:
+        payload = json.dumps({
+            "event_type": "subscription.updated",
+            "user_id": str(regular_user.id),
+            "status": "bogus_status",
+        }).encode()
+        resp = await client.post(
+            "/api/v1/subscriptions/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": _webhook_signature(payload),
             },
         )
         assert resp.status_code == 422

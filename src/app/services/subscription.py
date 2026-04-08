@@ -105,14 +105,19 @@ async def start_trial(db: AsyncSession, user_id: uuid.UUID) -> Subscription:
 async def cancel_subscription(
     db: AsyncSession, user_id: uuid.UUID
 ) -> Subscription | None:
-    """Cancel the current active subscription."""
+    """Cancel the current active subscription. Sets expires_at to now."""
     sub = await get_current_subscription(db, user_id)
     if sub is None or sub.status != SubscriptionStatus.active:
         return None
     sub.status = SubscriptionStatus.cancelled
+    sub.expires_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(sub)
     return sub
+
+
+_VALID_PLANS = {e.value for e in SubscriptionPlan}
+_VALID_STATUSES = {e.value for e in SubscriptionStatus}
 
 
 async def handle_webhook_event(
@@ -122,7 +127,15 @@ async def handle_webhook_event(
     plan: str | None = None,
     status: str | None = None,
 ) -> Subscription | None:
-    """Process a payment provider webhook event."""
+    """Process a payment provider webhook event.
+
+    Raises ValueError on invalid plan or status values.
+    """
+    if plan and plan not in _VALID_PLANS:
+        raise ValueError(f"Invalid plan: {plan}")
+    if status and status not in _VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}")
+
     if event_type == "subscription.created" and plan:
         return await create_subscription(db, user_id, plan)
     if event_type == "subscription.cancelled":
