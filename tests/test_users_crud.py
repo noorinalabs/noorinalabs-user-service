@@ -5,6 +5,8 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
 from jose import jwt
 from sqlalchemy import event
@@ -16,8 +18,21 @@ from src.app.main import create_app
 from src.app.models.role import Role, UserRole
 from src.app.models.user import Base, User
 
-TEST_SECRET = "test-jwt-secret-key"
-TEST_ALGORITHM = "HS256"
+# Generate a test RSA key pair (once per module)
+_test_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+TEST_PRIVATE_PEM = _test_private_key.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption(),
+).decode()
+TEST_PUBLIC_PEM = (
+    _test_private_key.public_key()
+    .public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    .decode()
+)
 
 
 def _make_token(
@@ -29,7 +44,7 @@ def _make_token(
     payload = {"sub": str(user_id), "exp": exp}
     if roles:
         payload["roles"] = roles  # type: ignore[assignment]
-    return jwt.encode(payload, TEST_SECRET, algorithm=TEST_ALGORITHM)
+    return jwt.encode(payload, TEST_PRIVATE_PEM, algorithm="RS256")
 
 
 @pytest.fixture
@@ -121,12 +136,10 @@ async def client(
 ) -> AsyncGenerator[AsyncClient, None]:
     app = create_app()
 
-    # Override settings
+    # Override settings — RS256 only, no HS256 fallback
     def _override_settings() -> Settings:
         return Settings(
-            JWT_SECRET=TEST_SECRET,
-            JWT_ALGORITHM=TEST_ALGORITHM,
-            JWT_PUBLIC_KEY=None,
+            JWT_PUBLIC_KEY=TEST_PUBLIC_PEM,
             DATABASE_URL="sqlite+aiosqlite://",
         )
 

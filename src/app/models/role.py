@@ -39,6 +39,4 @@ class UserRole(Base):
     )
 
     role: Mapped[Role] = relationship(back_populates="user_roles", lazy="joined")
-    user: Mapped[User] = relationship(
-        back_populates="user_roles", foreign_keys=[user_id]
-    )
+    user: Mapped[User] = relationship(back_populates="user_roles", foreign_keys=[user_id])
