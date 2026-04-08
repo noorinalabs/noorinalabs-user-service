@@ -7,6 +7,7 @@ and email dispatch.
 from __future__ import annotations
 
 import hashlib
+import html
 import secrets
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -164,6 +165,9 @@ def _build_verification_email(
         f"If you did not create an account, you can ignore this email."
     )
 
+    safe_url = html.escape(verification_url)
+    expire_hours = settings.VERIFICATION_TOKEN_EXPIRE_HOURS
+
     html_body = f"""\
 <!DOCTYPE html>
 <html>
@@ -173,7 +177,7 @@ def _build_verification_email(
   <h2 style="color: #1a1a2e;">Welcome to NoorinALabs</h2>
   <p>Please verify your email address by clicking the button below:</p>
   <p style="text-align: center; margin: 30px 0;">
-    <a href="{verification_url}"
+    <a href="{safe_url}"
        style="background-color: #16213e; color: #ffffff; padding: 12px 32px;
               text-decoration: none; border-radius: 6px; display: inline-block;
               font-weight: 600;">
@@ -182,10 +186,10 @@ def _build_verification_email(
   </p>
   <p style="color: #666; font-size: 14px;">
     Or copy this link into your browser:<br>
-    <a href="{verification_url}">{verification_url}</a>
+    <a href="{safe_url}">{safe_url}</a>
   </p>
   <p style="color: #999; font-size: 12px;">
-    This link expires in {settings.VERIFICATION_TOKEN_EXPIRE_HOURS} hours.
+    This link expires in {expire_hours} hours.
     If you did not create an account, you can safely ignore this email.
   </p>
 </body>
@@ -211,5 +215,5 @@ async def send_verification_email(
         port=settings.SMTP_PORT,
         username=settings.SMTP_USERNAME or None,
         password=settings.SMTP_PASSWORD or None,
-        use_tls=settings.SMTP_USE_TLS,
+        start_tls=settings.SMTP_START_TLS,
     )

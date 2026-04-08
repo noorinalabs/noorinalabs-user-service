@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM_EMAIL: str = "noreply@noorinalabs.com"
     SMTP_FROM_NAME: str = "NoorinALabs"
-    SMTP_USE_TLS: bool = True
+    SMTP_START_TLS: bool = True
 
     # OAuth — Redirect base URL
     AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
