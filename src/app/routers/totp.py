@@ -19,7 +19,7 @@ from src.app.services.totp import (
     verify_totp_setup,
 )
 
-router = APIRouter(prefix="/2fa", tags=["2fa"])
+router = APIRouter(prefix="/api/v1/2fa", tags=["2fa"])
 
 
 @router.post(

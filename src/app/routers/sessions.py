@@ -20,7 +20,7 @@ from src.app.services.session import (
 )
 from src.app.services.token import create_refresh_token
 
-router = APIRouter(prefix="/sessions", tags=["sessions"])
+router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
 
 def _hash_token(token: str) -> str:

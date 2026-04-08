@@ -1,8 +1,11 @@
-.PHONY: setup setup-hooks infra infra-down test lint format typecheck check migrate migrate-new migrate-down
+.PHONY: setup dev setup-hooks infra infra-down test lint format typecheck check migrate migrate-new migrate-down
 
 # Setup
 setup:
 	uv sync
+
+dev:
+	uv sync --extra dev
 
 setup-hooks:
 	@echo "Git hooks are enforced via Claude Code org-level hooks."

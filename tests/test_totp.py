@@ -164,7 +164,7 @@ class TestSetupEndpoint:
             new_callable=AsyncMock,
             return_value=("SECRET", "otpauth://totp/test", ["code1", "code2"]),
         ):
-            resp = await client.post("/2fa/setup")
+            resp = await client.post("/api/v1/2fa/setup")
             assert resp.status_code == 200
             data = resp.json()
             assert data["secret"] == "SECRET"
@@ -177,7 +177,7 @@ class TestSetupEndpoint:
             new_callable=AsyncMock,
             side_effect=ValueError("2FA is already enabled"),
         ):
-            resp = await client.post("/2fa/setup")
+            resp = await client.post("/api/v1/2fa/setup")
             assert resp.status_code == 400
             assert "already enabled" in resp.json()["detail"]
 
@@ -189,7 +189,7 @@ class TestVerifyEndpoint:
             new_callable=AsyncMock,
             return_value=True,
         ):
-            resp = await client.post("/2fa/verify", json={"code": "123456"})
+            resp = await client.post("/api/v1/2fa/verify", json={"code": "123456"})
             assert resp.status_code == 200
             data = resp.json()
             assert data["two_factor_enabled"] is True
@@ -200,11 +200,11 @@ class TestVerifyEndpoint:
             new_callable=AsyncMock,
             return_value=False,
         ):
-            resp = await client.post("/2fa/verify", json={"code": "000000"})
+            resp = await client.post("/api/v1/2fa/verify", json={"code": "000000"})
             assert resp.status_code == 400
 
     async def test_verify_code_too_short(self, client: AsyncClient) -> None:
-        resp = await client.post("/2fa/verify", json={"code": "123"})
+        resp = await client.post("/api/v1/2fa/verify", json={"code": "123"})
         assert resp.status_code == 422
 
 
@@ -215,7 +215,7 @@ class TestDisableEndpoint:
             new_callable=AsyncMock,
             return_value=True,
         ):
-            resp = await client.post("/2fa/disable", json={"code": "123456"})
+            resp = await client.post("/api/v1/2fa/disable", json={"code": "123456"})
             assert resp.status_code == 200
             data = resp.json()
             assert data["two_factor_enabled"] is False
@@ -226,7 +226,7 @@ class TestDisableEndpoint:
             new_callable=AsyncMock,
             return_value=False,
         ):
-            resp = await client.post("/2fa/disable", json={"code": "000000"})
+            resp = await client.post("/api/v1/2fa/disable", json={"code": "000000"})
             assert resp.status_code == 400
 
 
@@ -239,7 +239,7 @@ class TestStatusEndpoint:
             new_callable=AsyncMock,
             return_value=mock_secret,
         ):
-            resp = await client.get("/2fa/status")
+            resp = await client.get("/api/v1/2fa/status")
             assert resp.status_code == 200
             assert resp.json()["two_factor_enabled"] is True
 
@@ -249,7 +249,7 @@ class TestStatusEndpoint:
             new_callable=AsyncMock,
             return_value=None,
         ):
-            resp = await client.get("/2fa/status")
+            resp = await client.get("/api/v1/2fa/status")
             assert resp.status_code == 200
             assert resp.json()["two_factor_enabled"] is False
 
