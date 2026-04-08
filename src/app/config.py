@@ -1,0 +1,36 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    # Database
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://user_service:user_service_dev@localhost:5433/user_service"
+    )
+
+    # Redis
+    REDIS_URL: str = "redis://localhost:6380/0"
+
+    # JWT
+    JWT_SECRET: str = "change-me-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # CORS
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+
+    # Auth
+    AUTH_PASSWORD_MIN_LENGTH: int = 8
+    AUTH_MAX_LOGIN_ATTEMPTS: int = 5
+    AUTH_LOCKOUT_DURATION_MINUTES: int = 15
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
