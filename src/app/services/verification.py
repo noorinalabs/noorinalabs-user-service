@@ -9,10 +9,10 @@ from __future__ import annotations
 import hashlib
 import html
 import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any
 
 import aiosmtplib
 from sqlalchemy import func, select, update
@@ -29,7 +29,7 @@ def _hash_token(token: str) -> str:
 
 async def check_rate_limit(
     db: AsyncSession,
-    user_id: Any,
+    user_id: uuid.UUID,
     settings: Settings,
 ) -> bool:
     """Return True if the user has NOT exceeded the rate limit."""
@@ -51,7 +51,7 @@ async def check_rate_limit(
 
 async def invalidate_existing_tokens(
     db: AsyncSession,
-    user_id: Any,
+    user_id: uuid.UUID,
 ) -> None:
     """Mark all unused verification tokens for a user as used (invalidated)."""
     await db.execute(
@@ -67,7 +67,7 @@ async def invalidate_existing_tokens(
 
 async def create_verification_token(
     db: AsyncSession,
-    user_id: Any,
+    user_id: uuid.UUID,
     settings: Settings,
 ) -> str:
     """Create a new verification token. Invalidates any existing tokens first.
@@ -132,7 +132,7 @@ async def confirm_verification_token(
 
 async def get_latest_verification_token(
     db: AsyncSession,
-    user_id: Any,
+    user_id: uuid.UUID,
 ) -> VerificationToken | None:
     """Get the most recent verification token for a user."""
     result = await db.execute(

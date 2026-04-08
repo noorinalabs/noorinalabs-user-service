@@ -18,7 +18,7 @@ from src.app.services.verification import (
     send_verification_email,
 )
 
-router = APIRouter(prefix="/verification", tags=["verification"])
+router = APIRouter(prefix="/api/v1/verification", tags=["verification"])
 
 
 @router.post(
