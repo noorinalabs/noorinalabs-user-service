@@ -1,5 +1,6 @@
 """Session management routes — US #7."""
 
+import hashlib
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -17,9 +18,13 @@ from src.app.services.session import (
     revoke_all_sessions,
     revoke_session,
 )
-from src.app.services.token import _hash_token, create_refresh_token
+from src.app.services.token import create_refresh_token
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 @router.post(
@@ -44,8 +49,10 @@ async def create_user_session(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    await db.commit()
     return SessionCreateResponse(
         session_id=session.id,
+        refresh_token=token,
         expires_at=session.expires_at,
     )
 
@@ -78,6 +85,7 @@ async def revoke_single_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or already revoked",
         )
+    await db.commit()
 
 
 @router.delete("", response_model=RevokeAllResponse)
@@ -88,4 +96,5 @@ async def revoke_all_user_sessions(
 ) -> RevokeAllResponse:
     """Revoke all sessions for the current user (logout everywhere)."""
     count = await revoke_all_sessions(db=db, redis=redis, user_id=user.id)
+    await db.commit()
     return RevokeAllResponse(revoked_count=count)

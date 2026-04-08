@@ -35,6 +35,7 @@ class SessionCreateResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     session_id: uuid.UUID
+    refresh_token: str
     expires_at: datetime
 
 

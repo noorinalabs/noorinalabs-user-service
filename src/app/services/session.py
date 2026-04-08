@@ -43,7 +43,7 @@ async def create_session(
         expires_at=expires_at,
     )
     db.add(session)
-    await db.commit()
+    await db.flush()
     await db.refresh(session)
 
     # Store in Redis with TTL
@@ -131,7 +131,7 @@ async def revoke_session(
         )
         .values(revoked_at=now)
     )
-    await db.commit()
+    await db.flush()
 
     if cursor_result.rowcount == 0:
         return False
@@ -180,7 +180,7 @@ async def revoke_all_sessions(
         )
         .values(revoked_at=now)
     )
-    await db.commit()
+    await db.flush()
     revoked_count: int = cursor_result.rowcount
 
     # Clean up Redis

@@ -19,7 +19,13 @@ from src.app.services.session import (
     revoke_session,
     update_session_activity,
 )
-from src.app.services.token import _hash_token, create_refresh_token
+from src.app.services.token import create_refresh_token
+
+
+def _hash_token(token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 @pytest.fixture
