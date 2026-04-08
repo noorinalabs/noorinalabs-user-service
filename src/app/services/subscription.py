@@ -27,20 +27,39 @@ async def get_current_subscription(
 
 
 async def get_subscription_status(db: AsyncSession, user_id: uuid.UUID) -> str:
-    """Return the current subscription status string for JWT claims."""
+    """Return the current subscription status string for JWT claims.
+
+    Pure read — does not mutate the subscription. Expired subscriptions
+    are detected by comparing expires_at against now.
+    """
     sub = await get_current_subscription(db, user_id)
     if sub is None:
         return "free"
-    is_expired = (
+    if (
         sub.status == SubscriptionStatus.active
         and sub.expires_at
         and sub.expires_at < datetime.now(UTC)
-    )
-    if is_expired:
-        sub.status = SubscriptionStatus.expired
-        await db.flush()
+    ):
         return "expired"
     return sub.status.value
+
+
+async def expire_lapsed_subscriptions(
+    db: AsyncSession, user_id: uuid.UUID
+) -> None:
+    """Mark active subscriptions past their expires_at as expired.
+
+    Call this from a background task or cron, not from read paths.
+    """
+    sub = await get_current_subscription(db, user_id)
+    if (
+        sub is not None
+        and sub.status == SubscriptionStatus.active
+        and sub.expires_at
+        and sub.expires_at < datetime.now(UTC)
+    ):
+        sub.status = SubscriptionStatus.expired
+        await db.flush()
 
 
 async def create_subscription(

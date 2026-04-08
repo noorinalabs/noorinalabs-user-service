@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 
-from src.app.dependencies import AdminUserDep, CurrentUserDep, DbDep
+from src.app.dependencies import AdminUserDep, CurrentUserDep, DbDep, SettingsDep
 from src.app.schemas.subscription import (
     SubscriptionCreate,
     SubscriptionRead,
@@ -81,12 +83,43 @@ async def get_user_subscription(
     return SubscriptionRead.model_validate(sub)
 
 
+def _verify_webhook_signature(
+    body: bytes, signature: str, secret: str
+) -> bool:
+    """Verify HMAC-SHA256 webhook signature."""
+    expected = hmac.new(
+        secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(f"sha256={expected}", signature)
+
+
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 async def payment_webhook(
-    body: WebhookEvent,
+    request: Request,
     db: DbDep,
+    settings: SettingsDep,
+    x_webhook_signature: str = Header(),
 ) -> dict[str, str]:
-    """Webhook endpoint for payment provider callbacks."""
+    """Webhook endpoint for payment provider callbacks.
+
+    Requires HMAC-SHA256 signature in X-Webhook-Signature header.
+    """
+    if not settings.WEBHOOK_SIGNING_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Webhook signing secret not configured",
+        )
+
+    raw_body = await request.body()
+    if not _verify_webhook_signature(
+        raw_body, x_webhook_signature, settings.WEBHOOK_SIGNING_SECRET
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid webhook signature",
+        )
+
+    body = WebhookEvent.model_validate_json(raw_body)
     result = await sub_svc.handle_webhook_event(
         db,
         user_id=body.user_id,

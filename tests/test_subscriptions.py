@@ -1,5 +1,8 @@
 """Tests for Subscription API endpoints and service logic."""
 
+import hashlib
+import hmac as hmac_mod
+import json
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
@@ -19,6 +22,8 @@ from src.app.models.role import Role, UserRole
 from src.app.models.subscription import Subscription, SubscriptionPlan, SubscriptionStatus
 from src.app.models.user import Base, User
 from src.app.services import subscription as sub_svc
+
+WEBHOOK_SECRET = "test-webhook-secret-123"
 
 _test_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 TEST_PRIVATE_PEM = _test_private_key.private_bytes(
@@ -140,6 +145,7 @@ async def client(
         return Settings(
             JWT_PUBLIC_KEY=TEST_PUBLIC_PEM,
             DATABASE_URL="sqlite+aiosqlite://",
+            WEBHOOK_SIGNING_SECRET=WEBHOOK_SECRET,
         )
 
     session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
@@ -161,6 +167,13 @@ async def client(
 def _auth_header(user: User) -> dict[str, str]:
     token = _make_token(user.id)
     return {"Authorization": f"Bearer {token}"}
+
+
+def _webhook_signature(body: bytes) -> str:
+    sig = hmac_mod.new(
+        WEBHOOK_SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+    return f"sha256={sig}"
 
 
 # --- Service-level tests ---
@@ -345,7 +358,67 @@ class TestGetUserSubscription:
 
 class TestWebhook:
     @pytest.mark.asyncio
-    async def test_subscription_created(self, client: AsyncClient, regular_user: User) -> None:
+    async def test_subscription_created(
+        self, client: AsyncClient, regular_user: User
+    ) -> None:
+        payload = json.dumps({
+            "event_type": "subscription.created",
+            "user_id": str(regular_user.id),
+            "plan": "researcher",
+        }).encode()
+        resp = await client.post(
+            "/api/v1/subscriptions/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": _webhook_signature(payload),
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "processed"
+
+    @pytest.mark.asyncio
+    async def test_unknown_event_ignored(
+        self, client: AsyncClient, regular_user: User
+    ) -> None:
+        payload = json.dumps({
+            "event_type": "invoice.paid",
+            "user_id": str(regular_user.id),
+        }).encode()
+        resp = await client.post(
+            "/api/v1/subscriptions/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": _webhook_signature(payload),
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature_rejected(
+        self, client: AsyncClient, regular_user: User
+    ) -> None:
+        payload = json.dumps({
+            "event_type": "subscription.created",
+            "user_id": str(regular_user.id),
+            "plan": "researcher",
+        }).encode()
+        resp = await client.post(
+            "/api/v1/subscriptions/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": "sha256=invalid",
+            },
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_missing_signature_rejected(
+        self, client: AsyncClient, regular_user: User
+    ) -> None:
         resp = await client.post(
             "/api/v1/subscriptions/webhook",
             json={
@@ -354,17 +427,4 @@ class TestWebhook:
                 "plan": "researcher",
             },
         )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "processed"
-
-    @pytest.mark.asyncio
-    async def test_unknown_event_ignored(self, client: AsyncClient, regular_user: User) -> None:
-        resp = await client.post(
-            "/api/v1/subscriptions/webhook",
-            json={
-                "event_type": "invoice.paid",
-                "user_id": str(regular_user.id),
-            },
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "ignored"
+        assert resp.status_code == 422

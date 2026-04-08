@@ -6,7 +6,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.app.models.user import Base
@@ -28,6 +28,14 @@ class SubscriptionStatus(enum.StrEnum):
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index(
+            "ix_subscriptions_one_active_trial",
+            "user_id",
+            unique=True,
+            postgresql_where="plan = 'trial' AND status = 'active'",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
