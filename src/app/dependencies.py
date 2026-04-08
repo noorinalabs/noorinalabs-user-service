@@ -6,15 +6,17 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
 from jose import JWTError, jwt
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import Settings, get_settings
-from src.app.database import get_db_session
+from src.app.database import get_db_session, get_redis
 from src.app.models.user import User
 from src.app.services.rbac import get_user_role_names, load_user_with_roles, user_has_minimum_role
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbDep = Annotated[AsyncSession, Depends(get_db_session)]
+RedisDep = Annotated[Redis, Depends(get_redis)]
 
 
 async def get_current_user(
