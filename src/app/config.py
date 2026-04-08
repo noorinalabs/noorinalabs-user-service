@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     AUTH_FACEBOOK_APP_ID: str = ""
     AUTH_FACEBOOK_APP_SECRET: str = ""
 
+    # 2FA / TOTP
+    TOTP_ISSUER_NAME: str = "NoorinALabs"
+    TOTP_ENCRYPTION_KEY: str = ""  # Fernet key for encrypting TOTP secrets at rest
+    TOTP_RECOVERY_CODE_COUNT: int = 8
+
     # OAuth — Redirect base URL
     AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
 
