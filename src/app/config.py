@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "NoorinALabs"
     SMTP_START_TLS: bool = True
 
+    # 2FA / TOTP
+    TOTP_ISSUER_NAME: str = "NoorinALabs"
+    TOTP_ENCRYPTION_KEY: str = ""  # Fernet key for encrypting TOTP secrets at rest
+    TOTP_RECOVERY_CODE_COUNT: int = 8
+
     # Webhook
     WEBHOOK_SIGNING_SECRET: str = ""
 
