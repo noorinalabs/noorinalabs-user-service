@@ -37,7 +37,7 @@ class TOTPDisableRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    code: str = Field(min_length=6, max_length=8)
+    code: str = Field(min_length=6, max_length=17)
 
 
 class TOTPDisableResponse(BaseModel):

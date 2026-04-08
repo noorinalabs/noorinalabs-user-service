@@ -24,10 +24,13 @@ from src.app.models.totp_secret import TOTPSecret
 def _get_fernet(settings: Settings) -> Fernet:
     """Get a Fernet instance for encrypting/decrypting TOTP secrets."""
     if not settings.TOTP_ENCRYPTION_KEY:
-        key = Fernet.generate_key()
-    else:
-        key = settings.TOTP_ENCRYPTION_KEY.encode()
-    return Fernet(key)
+        msg = (
+            "TOTP_ENCRYPTION_KEY must be set. "
+            "Generate one with: python -c "
+            '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+        )
+        raise ValueError(msg)
+    return Fernet(settings.TOTP_ENCRYPTION_KEY.encode())
 
 
 def encrypt_secret(plaintext: str, settings: Settings) -> str:
@@ -141,7 +144,7 @@ async def verify_totp_setup(
     raw_secret = decrypt_secret(secret.encrypted_secret, settings)
     totp = pyotp.TOTP(raw_secret)
 
-    if not totp.verify(code):
+    if not totp.verify(code, valid_window=1):
         return False
 
     secret.is_verified = True
@@ -167,7 +170,7 @@ async def verify_totp_code(
     # Try TOTP code first
     raw_secret = decrypt_secret(secret.encrypted_secret, settings)
     totp = pyotp.TOTP(raw_secret)
-    if totp.verify(code):
+    if totp.verify(code, valid_window=1):
         return True
 
     # Try recovery code
@@ -196,11 +199,13 @@ async def disable_totp(
     raw_secret = decrypt_secret(secret.encrypted_secret, settings)
     totp = pyotp.TOTP(raw_secret)
 
-    code_valid = totp.verify(code)
-    # Also allow recovery codes for disable
+    code_valid = totp.verify(code, valid_window=1)
+    # Also allow recovery codes for disable — consume on use
     recovery_valid = False
     if not code_valid and secret.recovery_codes:
-        recovery_valid, _ = _verify_recovery_code(code, secret.recovery_codes)
+        recovery_valid, updated_codes = _verify_recovery_code(code, secret.recovery_codes)
+        if recovery_valid:
+            secret.recovery_codes = updated_codes
 
     if not code_valid and not recovery_valid:
         return False

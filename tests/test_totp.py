@@ -78,6 +78,14 @@ async def client(
 
 
 class TestEncryption:
+    def test_missing_key_raises(self) -> None:
+        no_key_settings = Settings(
+            DATABASE_URL="sqlite+aiosqlite:///:memory:",
+            TOTP_ENCRYPTION_KEY="",
+        )
+        with pytest.raises(ValueError, match="TOTP_ENCRYPTION_KEY must be set"):
+            encrypt_secret("test", no_key_settings)
+
     def test_encrypt_decrypt_roundtrip(self, settings: Settings) -> None:
         plaintext = "JBSWY3DPEHPK3PXP"
         encrypted = encrypt_secret(plaintext, settings)

@@ -1,17 +1,18 @@
 """Add totp_secrets table for 2FA support.
 
 Revision ID: 0030
-Revises: 0001
+Revises: 0010
 Create Date: 2026-04-08
 """
 
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0030"
-down_revision: str = "0001"
+down_revision: str = "0010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
