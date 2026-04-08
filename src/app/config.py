@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "NoorinALabs"
     SMTP_START_TLS: bool = True
 
+    # Webhook
+    WEBHOOK_SIGNING_SECRET: str = ""
+
     # OAuth — Redirect base URL
     AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
 

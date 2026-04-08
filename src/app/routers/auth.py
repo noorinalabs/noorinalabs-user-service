@@ -26,6 +26,7 @@ from src.app.schemas.auth import (
     TokenValidationResponse,
 )
 from src.app.services.oauth import OAuthProvider, generate_pkce_pair, get_oauth_provider
+from src.app.services.subscription import get_subscription_status
 from src.app.services.token import (
     create_access_token,
     create_refresh_token,
@@ -115,15 +116,7 @@ async def refresh_token(
     )
     roles = [row[0] for row in roles_result.fetchall()]
 
-    # Fetch subscription status
-    sub_result = await db.execute(
-        text(
-            "SELECT status FROM subscriptions WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"
-        ),
-        {"uid": session.user_id},
-    )
-    sub_row = sub_result.fetchone()
-    subscription_status = sub_row[0] if sub_row else "free"
+    subscription_status = await get_subscription_status(db, session.user_id)
 
     access_token, expires_at = create_access_token(
         settings=settings,
