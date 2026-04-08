@@ -29,6 +29,27 @@ class Settings(BaseSettings):
     AUTH_MAX_LOGIN_ATTEMPTS: int = 5
     AUTH_LOCKOUT_DURATION_MINUTES: int = 15
 
+    # OAuth — Google
+    AUTH_GOOGLE_CLIENT_ID: str = ""
+    AUTH_GOOGLE_CLIENT_SECRET: str = ""
+
+    # OAuth — GitHub
+    AUTH_GITHUB_CLIENT_ID: str = ""
+    AUTH_GITHUB_CLIENT_SECRET: str = ""
+
+    # OAuth — Apple
+    AUTH_APPLE_CLIENT_ID: str = ""
+    AUTH_APPLE_TEAM_ID: str = ""
+    AUTH_APPLE_KEY_ID: str = ""
+    AUTH_APPLE_PRIVATE_KEY: str = ""
+
+    # OAuth — Facebook
+    AUTH_FACEBOOK_APP_ID: str = ""
+    AUTH_FACEBOOK_APP_SECRET: str = ""
+
+    # OAuth — Redirect base URL
+    AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
