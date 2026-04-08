@@ -36,6 +36,15 @@ htmlcov/
 # Data
 data/
 
+# Docker
+*.log
+docker-compose.override.yml
+
+# Temp / Cache
+tmp/
+temp/
+.cache/
+
 # OS
 .DS_Store
 Thumbs.db
