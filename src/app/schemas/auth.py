@@ -1,9 +1,12 @@
-"""Auth request/response schemas for JWT token endpoints."""
+"""Auth schemas for JWT token and OAuth endpoints."""
 
 import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
+# --- JWT Token Schemas ---
 
 
 class TokenRequest(BaseModel):
@@ -76,3 +79,52 @@ class JWKSResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     keys: list[JWK]
+
+
+# --- OAuth Schemas ---
+
+
+class OAuthLoginResponse(BaseModel):
+    """Response for OAuth login initiation — returns the authorization URL."""
+
+    model_config = ConfigDict(frozen=True)
+
+    authorization_url: str
+    state: str
+    code_verifier: str
+
+
+class OAuthCallbackRequest(BaseModel):
+    """Request body for OAuth callback."""
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    state: str
+    code_verifier: str
+
+
+class OAuthUserInfo(BaseModel):
+    """Normalized user info extracted from an OAuth provider."""
+
+    model_config = ConfigDict(frozen=True)
+
+    provider: str
+    provider_account_id: str
+    email: str | None = None
+    display_name: str | None = None
+    avatar_url: str | None = None
+
+
+class OAuthCallbackResponse(BaseModel):
+    """Response for OAuth callback — returns user data."""
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: uuid.UUID
+    email: str
+    display_name: str | None = None
+    avatar_url: str | None = None
+    is_new_user: bool
+    provider: str
+    created_at: datetime
