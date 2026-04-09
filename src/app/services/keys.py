@@ -30,10 +30,20 @@ def _ensure_dev_keys() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     return _dev_private_key, _dev_public_key
 
 
+def _maybe_b64_decode(value: str) -> str:
+    """Decode base64-encoded PEM if needed. Pass through raw PEM unchanged."""
+    if value.startswith("-----BEGIN"):
+        return value
+    try:
+        return base64.b64decode(value).decode("utf-8")
+    except Exception:
+        return value
+
+
 def get_private_key(settings: Settings) -> str:
     """Return the PEM-encoded private key string for JWT signing."""
     if settings.JWT_PRIVATE_KEY:
-        return settings.JWT_PRIVATE_KEY
+        return _maybe_b64_decode(settings.JWT_PRIVATE_KEY)
     priv, _ = _ensure_dev_keys()
     pem: bytes = priv.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -46,7 +56,7 @@ def get_private_key(settings: Settings) -> str:
 def get_public_key(settings: Settings) -> str:
     """Return the PEM-encoded public key string for JWT verification."""
     if settings.JWT_PUBLIC_KEY:
-        return settings.JWT_PUBLIC_KEY
+        return _maybe_b64_decode(settings.JWT_PUBLIC_KEY)
     _, pub = _ensure_dev_keys()
     pem: bytes = pub.public_bytes(
         encoding=serialization.Encoding.PEM,
