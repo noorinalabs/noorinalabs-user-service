@@ -1,5 +1,6 @@
 """Unit tests for JWT token lifecycle — keys, signing, validation, JWKS."""
 
+import base64
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -8,6 +9,7 @@ from jose import JWTError, jwt
 
 from src.app.config import Settings
 from src.app.services.keys import (
+    _maybe_b64_decode,
     get_private_key,
     get_public_key,
     get_public_key_jwk,
@@ -42,6 +44,30 @@ class TestKeyManagement:
         settings = _test_settings()
         assert get_private_key(settings) == get_private_key(settings)
         assert get_public_key(settings) == get_public_key(settings)
+
+    def test_base64_encoded_keys_decoded(self) -> None:
+        settings = _test_settings()
+        priv_pem = get_private_key(settings)
+        pub_pem = get_public_key(settings)
+
+        priv_b64 = base64.b64encode(priv_pem.encode()).decode()
+        pub_b64 = base64.b64encode(pub_pem.encode()).decode()
+
+        b64_settings = Settings(
+            DATABASE_URL="sqlite+aiosqlite:///:memory:",
+            JWT_PRIVATE_KEY=priv_b64,
+            JWT_PUBLIC_KEY=pub_b64,
+        )
+        assert get_private_key(b64_settings) == priv_pem
+        assert get_public_key(b64_settings) == pub_pem
+
+    def test_maybe_b64_decode_passthrough_pem(self) -> None:
+        pem = "-----BEGIN PUBLIC KEY-----\nMIIBIjAN..."
+        assert _maybe_b64_decode(pem) == pem
+
+    def test_maybe_b64_decode_invalid_returns_original(self) -> None:
+        garbage = "not-valid-base64-!@#$"
+        assert _maybe_b64_decode(garbage) == garbage
 
     def test_explicit_keys_used_when_provided(self) -> None:
         settings = _test_settings()
