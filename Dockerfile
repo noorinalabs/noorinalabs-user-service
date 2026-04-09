@@ -12,8 +12,10 @@ RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
 
 FROM base AS runtime
 WORKDIR /app
+RUN adduser --system --no-create-home app
 COPY --from=builder /app/.venv /app/.venv
 COPY . .
+USER app
 
 ENV PATH="/app/.venv/bin:$PATH"
 
