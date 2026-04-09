@@ -1,23 +1,23 @@
-FROM python:3.12-slim AS builder
+# syntax=docker/dockerfile:1
+FROM python:3.14-slim AS base
 
-WORKDIR /build
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --prefix=/install .
+FROM base AS builder
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
 
-COPY src/ ./src/
-
-FROM python:3.12-slim
-
-RUN groupadd --gid 1000 app && \
-    useradd --uid 1000 --gid app --shell /bin/bash --create-home app
-
-COPY --from=builder /install /usr/local
-COPY --from=builder /build/src /home/app/src
-COPY alembic/ /home/app/alembic/
-COPY alembic.ini /home/app/
-
-WORKDIR /home/app
+FROM base AS runtime
+WORKDIR /app
+RUN adduser --system --no-create-home app
+COPY --from=builder /app/.venv /app/.venv
+COPY . .
 USER app
 
-EXPOSE 8000
+ENV PATH="/app/.venv/bin:$PATH"
+
+# No CMD — docker-compose.prod.yml command: is the single source of truth
+# Standalone: uvicorn src.app.main:create_app --factory --host 0.0.0.0 --port 8000
