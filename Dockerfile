@@ -19,5 +19,4 @@ USER app
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-# No CMD — docker-compose.prod.yml command: is the single source of truth
-# Standalone: uvicorn src.app.main:create_app --factory --host 0.0.0.0 --port 8000
+CMD ["uvicorn", "src.app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
