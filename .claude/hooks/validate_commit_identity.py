@@ -10,9 +10,9 @@ Exit codes:
 """
 
 import json
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 # Load roster from shared JSON file — single source of truth for all hooks
 _ROSTER_PATH = Path(__file__).resolve().parent.parent / "team" / "roster.json"
