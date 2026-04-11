@@ -201,7 +201,7 @@ class AppleOAuthProvider(BaseOAuthProvider):
         """Generate a short-lived JWT client secret for Apple."""
         import time
 
-        from jose import jwt as jose_jwt  # type: ignore[import-untyped]
+        from jose import jwt as jose_jwt
 
         now = int(time.time())
         payload = {
@@ -211,7 +211,7 @@ class AppleOAuthProvider(BaseOAuthProvider):
             "aud": "https://appleid.apple.com",
             "sub": self.client_id,
         }
-        return jose_jwt.encode(  # type: ignore[no-any-return]
+        return jose_jwt.encode(
             payload,
             self.private_key,
             algorithm="ES256",

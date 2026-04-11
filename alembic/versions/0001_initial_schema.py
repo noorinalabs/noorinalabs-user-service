@@ -8,6 +8,7 @@ Create Date: 2026-04-07
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0001"
@@ -22,9 +23,7 @@ subscription_plan = sa.Enum(
 subscription_status = sa.Enum(
     "active", "expired", "cancelled", "suspended", name="subscription_status"
 )
-token_type = sa.Enum(
-    "email_verification", "password_reset", "magic_link", name="token_type"
-)
+token_type = sa.Enum("email_verification", "password_reset", "magic_link", name="token_type")
 
 
 def upgrade() -> None:
@@ -83,18 +82,21 @@ def upgrade() -> None:
     # --- user_roles ---
     op.create_table(
         "user_roles",
-        sa.Column("user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"),
-                  primary_key=True),
-        sa.Column("role_id", sa.UUID(), sa.ForeignKey("roles.id", ondelete="CASCADE"),
-                  primary_key=True),
+        sa.Column(
+            "user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+        ),
+        sa.Column(
+            "role_id", sa.UUID(), sa.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
+        ),
         sa.Column(
             "granted_at",
             sa.DateTime(timezone=True),
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.Column("granted_by", sa.UUID(), sa.ForeignKey("users.id", ondelete="SET NULL"),
-                  nullable=True),
+        sa.Column(
+            "granted_by", sa.UUID(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        ),
     )
 
     # --- sessions ---
@@ -106,8 +108,9 @@ def upgrade() -> None:
             primary_key=True,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"),
-                  nullable=False),
+        sa.Column(
+            "user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("token_hash", sa.String(255), nullable=False),
         sa.Column("ip_address", sa.String(45), nullable=True),
         sa.Column("user_agent", sa.Text(), nullable=True),
@@ -132,8 +135,9 @@ def upgrade() -> None:
             primary_key=True,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"),
-                  nullable=False),
+        sa.Column(
+            "user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("plan", subscription_plan, nullable=False),
         sa.Column("status", subscription_status, nullable=False),
         sa.Column("starts_at", sa.DateTime(timezone=True), nullable=False),
@@ -161,8 +165,9 @@ def upgrade() -> None:
             primary_key=True,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"),
-                  nullable=False),
+        sa.Column(
+            "user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("token_hash", sa.String(255), nullable=False),
         sa.Column("token_type", token_type, nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
@@ -192,8 +197,9 @@ def upgrade() -> None:
             primary_key=True,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"),
-                  nullable=False),
+        sa.Column(
+            "user_id", sa.UUID(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("provider", sa.String(50), nullable=False),
         sa.Column("provider_account_id", sa.String(255), nullable=False),
         sa.Column(

@@ -13,9 +13,7 @@ from src.app.models.subscription import Subscription, SubscriptionPlan, Subscrip
 TRIAL_DURATION_DAYS = 14
 
 
-async def get_current_subscription(
-    db: AsyncSession, user_id: uuid.UUID
-) -> Subscription | None:
+async def get_current_subscription(db: AsyncSession, user_id: uuid.UUID) -> Subscription | None:
     """Return the most recent subscription for a user."""
     result = await db.execute(
         select(Subscription)
@@ -44,9 +42,7 @@ async def get_subscription_status(db: AsyncSession, user_id: uuid.UUID) -> str:
     return sub.status.value
 
 
-async def expire_lapsed_subscriptions(
-    db: AsyncSession, user_id: uuid.UUID
-) -> None:
+async def expire_lapsed_subscriptions(db: AsyncSession, user_id: uuid.UUID) -> None:
     """Mark active subscriptions past their expires_at as expired.
 
     Call this from a background task or cron, not from read paths.
@@ -102,9 +98,7 @@ async def start_trial(db: AsyncSession, user_id: uuid.UUID) -> Subscription:
     return subscription
 
 
-async def cancel_subscription(
-    db: AsyncSession, user_id: uuid.UUID
-) -> Subscription | None:
+async def cancel_subscription(db: AsyncSession, user_id: uuid.UUID) -> Subscription | None:
     """Cancel the current active subscription. Sets expires_at to now."""
     sub = await get_current_subscription(db, user_id)
     if sub is None or sub.status != SubscriptionStatus.active:

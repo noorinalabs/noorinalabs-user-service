@@ -96,9 +96,7 @@ async def list_user_sessions(
         redis_key = f"{REDIS_SESSION_PREFIX}{s.id}"
         last_active_raw: bytes | None = await redis.hget(redis_key, "last_active")  # type: ignore[misc]
         last_active: datetime = (
-            datetime.fromisoformat(last_active_raw.decode())
-            if last_active_raw
-            else s.last_active
+            datetime.fromisoformat(last_active_raw.decode()) if last_active_raw else s.last_active
         )
         enriched.append(
             {

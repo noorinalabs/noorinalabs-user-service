@@ -280,9 +280,7 @@ class TestTokenHashing:
 
 
 class TestSendEndpoint:
-    async def test_send_success(
-        self, client: AsyncClient, test_user: User
-    ) -> None:
+    async def test_send_success(self, client: AsyncClient, test_user: User) -> None:
         with patch(
             "src.app.routers.verification.send_verification_email",
             new_callable=AsyncMock,
@@ -296,9 +294,7 @@ class TestSendEndpoint:
             assert resp.json()["message"] == "Verification email sent"
             mock_send.assert_awaited_once()
 
-    async def test_send_already_verified(
-        self, client: AsyncClient, verified_user: User
-    ) -> None:
+    async def test_send_already_verified(self, client: AsyncClient, verified_user: User) -> None:
         resp = await client.post(
             "/api/v1/verification/send",
             json={"email": verified_user.email},
@@ -307,9 +303,7 @@ class TestSendEndpoint:
         assert resp.status_code == 400
         assert "already verified" in resp.json()["detail"]
 
-    async def test_send_email_mismatch(
-        self, client: AsyncClient, test_user: User
-    ) -> None:
+    async def test_send_email_mismatch(self, client: AsyncClient, test_user: User) -> None:
         resp = await client.post(
             "/api/v1/verification/send",
             json={"email": "other@example.com"},
@@ -318,9 +312,7 @@ class TestSendEndpoint:
         assert resp.status_code == 400
         assert "does not match" in resp.json()["detail"]
 
-    async def test_send_rate_limited(
-        self, client: AsyncClient, test_user: User
-    ) -> None:
+    async def test_send_rate_limited(self, client: AsyncClient, test_user: User) -> None:
         for _ in range(3):
             with patch(
                 "src.app.routers.verification.send_verification_email",
@@ -352,9 +344,7 @@ class TestConfirmEndpoint:
 
 
 class TestStatusEndpoint:
-    async def test_status_not_verified(
-        self, client: AsyncClient, test_user: User
-    ) -> None:
+    async def test_status_not_verified(self, client: AsyncClient, test_user: User) -> None:
         resp = await client.get(
             "/api/v1/verification/status",
             headers=_auth_header(test_user),
@@ -364,9 +354,7 @@ class TestStatusEndpoint:
         assert data["email"] == test_user.email
         assert data["email_verified"] is False
 
-    async def test_status_verified(
-        self, client: AsyncClient, verified_user: User
-    ) -> None:
+    async def test_status_verified(self, client: AsyncClient, verified_user: User) -> None:
         resp = await client.get(
             "/api/v1/verification/status",
             headers=_auth_header(verified_user),

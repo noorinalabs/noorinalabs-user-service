@@ -50,9 +50,7 @@ def upgrade() -> None:
         sa.Column("verified_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("disabled_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.create_index(
-        "ix_totp_secrets_user_id", "totp_secrets", ["user_id"], unique=True
-    )
+    op.create_index("ix_totp_secrets_user_id", "totp_secrets", ["user_id"], unique=True)
 
 
 def downgrade() -> None:

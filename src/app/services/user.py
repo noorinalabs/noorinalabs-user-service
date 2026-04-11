@@ -15,7 +15,6 @@ from src.app.models.role import UserRole
 from src.app.models.user import User
 from src.app.schemas.user import UserUpdate
 
-
 # --- User CRUD ---
 
 

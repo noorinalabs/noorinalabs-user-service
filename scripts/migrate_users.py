@@ -184,9 +184,7 @@ def _ensure_roles(conn: sa.engine.Connection, roles_table: sa.Table) -> dict[str
     """Ensure all expected roles exist and return name→id mapping."""
     role_map: dict[str, uuid.UUID] = {}
     for name, description in ROLE_DESCRIPTIONS.items():
-        row = conn.execute(
-            sa.select(roles_table.c.id).where(roles_table.c.name == name)
-        ).fetchone()
+        row = conn.execute(sa.select(roles_table.c.id).where(roles_table.c.name == name)).fetchone()
         if row:
             role_map[name] = row[0]
         else:
@@ -212,9 +210,7 @@ def load_user(
     subscriptions_t = metadata.tables["subscriptions"]
 
     # Idempotency: check if user with this email already exists
-    existing = conn.execute(
-        sa.select(users_t.c.id).where(users_t.c.email == user.email)
-    ).fetchone()
+    existing = conn.execute(sa.select(users_t.c.id).where(users_t.c.email == user.email)).fetchone()
     if existing:
         log.debug("Skipping existing user: %s", user.email)
         return "skipped"
@@ -419,9 +415,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--database-url", required=True, help="PostgreSQL connection URL")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
     parser.add_argument("--verbose", action="store_true", help="Enable DEBUG logging")
-    parser.add_argument(
-        "--batch-size", type=int, default=50, help="Report progress every N users"
-    )
+    parser.add_argument("--batch-size", type=int, default=50, help="Report progress every N users")
     return parser.parse_args(argv)
 
 
