@@ -207,11 +207,16 @@ class TestParseNeo4jDatetime:
 # ---------------------------------------------------------------------------
 class TestParseArgs:
     def test_required_args(self) -> None:
-        args = parse_args([
-            "--neo4j-uri", "bolt://localhost:7687",
-            "--neo4j-password", "secret",
-            "--database-url", "postgresql://localhost/db",
-        ])
+        args = parse_args(
+            [
+                "--neo4j-uri",
+                "bolt://localhost:7687",
+                "--neo4j-password",
+                "secret",
+                "--database-url",
+                "postgresql://localhost/db",
+            ]
+        )
         assert args.neo4j_uri == "bolt://localhost:7687"
         assert args.neo4j_user == "neo4j"  # default
         assert args.neo4j_password == "secret"
@@ -220,30 +225,46 @@ class TestParseArgs:
         assert args.verbose is False
 
     def test_dry_run_flag(self) -> None:
-        args = parse_args([
-            "--neo4j-uri", "bolt://localhost:7687",
-            "--neo4j-password", "secret",
-            "--database-url", "postgresql://localhost/db",
-            "--dry-run",
-        ])
+        args = parse_args(
+            [
+                "--neo4j-uri",
+                "bolt://localhost:7687",
+                "--neo4j-password",
+                "secret",
+                "--database-url",
+                "postgresql://localhost/db",
+                "--dry-run",
+            ]
+        )
         assert args.dry_run is True
 
     def test_verbose_flag(self) -> None:
-        args = parse_args([
-            "--neo4j-uri", "bolt://localhost:7687",
-            "--neo4j-password", "secret",
-            "--database-url", "postgresql://localhost/db",
-            "--verbose",
-        ])
+        args = parse_args(
+            [
+                "--neo4j-uri",
+                "bolt://localhost:7687",
+                "--neo4j-password",
+                "secret",
+                "--database-url",
+                "postgresql://localhost/db",
+                "--verbose",
+            ]
+        )
         assert args.verbose is True
 
     def test_custom_batch_size(self) -> None:
-        args = parse_args([
-            "--neo4j-uri", "bolt://localhost:7687",
-            "--neo4j-password", "secret",
-            "--database-url", "postgresql://localhost/db",
-            "--batch-size", "100",
-        ])
+        args = parse_args(
+            [
+                "--neo4j-uri",
+                "bolt://localhost:7687",
+                "--neo4j-password",
+                "secret",
+                "--database-url",
+                "postgresql://localhost/db",
+                "--batch-size",
+                "100",
+            ]
+        )
         assert args.batch_size == 100
 
 

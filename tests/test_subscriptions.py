@@ -170,9 +170,7 @@ def _auth_header(user: User) -> dict[str, str]:
 
 
 def _webhook_signature(body: bytes) -> str:
-    sig = hmac_mod.new(
-        WEBHOOK_SECRET.encode(), body, hashlib.sha256
-    ).hexdigest()
+    sig = hmac_mod.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
     return f"sha256={sig}"
 
 
@@ -373,9 +371,7 @@ class TestGetUserSubscription:
         assert resp.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_no_subscription_returns_404(
-        self, client: AsyncClient, admin_user: User
-    ) -> None:
+    async def test_no_subscription_returns_404(self, client: AsyncClient, admin_user: User) -> None:
         resp = await client.get(
             f"/api/v1/subscriptions/{uuid.uuid4()}",
             headers=_auth_header(admin_user),
@@ -385,14 +381,14 @@ class TestGetUserSubscription:
 
 class TestWebhook:
     @pytest.mark.asyncio
-    async def test_subscription_created(
-        self, client: AsyncClient, regular_user: User
-    ) -> None:
-        payload = json.dumps({
-            "event_type": "subscription.created",
-            "user_id": str(regular_user.id),
-            "plan": "researcher",
-        }).encode()
+    async def test_subscription_created(self, client: AsyncClient, regular_user: User) -> None:
+        payload = json.dumps(
+            {
+                "event_type": "subscription.created",
+                "user_id": str(regular_user.id),
+                "plan": "researcher",
+            }
+        ).encode()
         resp = await client.post(
             "/api/v1/subscriptions/webhook",
             content=payload,
@@ -405,13 +401,13 @@ class TestWebhook:
         assert resp.json()["status"] == "processed"
 
     @pytest.mark.asyncio
-    async def test_unknown_event_ignored(
-        self, client: AsyncClient, regular_user: User
-    ) -> None:
-        payload = json.dumps({
-            "event_type": "invoice.paid",
-            "user_id": str(regular_user.id),
-        }).encode()
+    async def test_unknown_event_ignored(self, client: AsyncClient, regular_user: User) -> None:
+        payload = json.dumps(
+            {
+                "event_type": "invoice.paid",
+                "user_id": str(regular_user.id),
+            }
+        ).encode()
         resp = await client.post(
             "/api/v1/subscriptions/webhook",
             content=payload,
@@ -427,11 +423,13 @@ class TestWebhook:
     async def test_invalid_signature_rejected(
         self, client: AsyncClient, regular_user: User
     ) -> None:
-        payload = json.dumps({
-            "event_type": "subscription.created",
-            "user_id": str(regular_user.id),
-            "plan": "researcher",
-        }).encode()
+        payload = json.dumps(
+            {
+                "event_type": "subscription.created",
+                "user_id": str(regular_user.id),
+                "plan": "researcher",
+            }
+        ).encode()
         resp = await client.post(
             "/api/v1/subscriptions/webhook",
             content=payload,
@@ -460,14 +458,14 @@ class TestWebhook:
     async def test_subscription_cancelled(
         self, client: AsyncClient, regular_user: User, db_session: AsyncSession
     ) -> None:
-        await sub_svc.create_subscription(
-            db_session, regular_user.id, "researcher"
-        )
+        await sub_svc.create_subscription(db_session, regular_user.id, "researcher")
         await db_session.commit()
-        payload = json.dumps({
-            "event_type": "subscription.cancelled",
-            "user_id": str(regular_user.id),
-        }).encode()
+        payload = json.dumps(
+            {
+                "event_type": "subscription.cancelled",
+                "user_id": str(regular_user.id),
+            }
+        ).encode()
         resp = await client.post(
             "/api/v1/subscriptions/webhook",
             content=payload,
@@ -483,16 +481,16 @@ class TestWebhook:
     async def test_subscription_updated(
         self, client: AsyncClient, regular_user: User, db_session: AsyncSession
     ) -> None:
-        await sub_svc.create_subscription(
-            db_session, regular_user.id, "researcher"
-        )
+        await sub_svc.create_subscription(db_session, regular_user.id, "researcher")
         await db_session.commit()
-        payload = json.dumps({
-            "event_type": "subscription.updated",
-            "user_id": str(regular_user.id),
-            "status": "suspended",
-            "plan": "institutional",
-        }).encode()
+        payload = json.dumps(
+            {
+                "event_type": "subscription.updated",
+                "user_id": str(regular_user.id),
+                "status": "suspended",
+                "plan": "institutional",
+            }
+        ).encode()
         resp = await client.post(
             "/api/v1/subscriptions/webhook",
             content=payload,
@@ -508,11 +506,13 @@ class TestWebhook:
     async def test_webhook_invalid_status_rejected(
         self, client: AsyncClient, regular_user: User
     ) -> None:
-        payload = json.dumps({
-            "event_type": "subscription.updated",
-            "user_id": str(regular_user.id),
-            "status": "bogus_status",
-        }).encode()
+        payload = json.dumps(
+            {
+                "event_type": "subscription.updated",
+                "user_id": str(regular_user.id),
+                "status": "bogus_status",
+            }
+        ).encode()
         resp = await client.post(
             "/api/v1/subscriptions/webhook",
             content=payload,

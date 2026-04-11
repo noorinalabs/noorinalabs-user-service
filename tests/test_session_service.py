@@ -204,9 +204,7 @@ class TestCreateSession:
         # Check oldest session is revoked
         from sqlalchemy import select
 
-        result = await db_session.execute(
-            select(Session).where(Session.id == session_ids[0])
-        )
+        result = await db_session.execute(select(Session).where(Session.id == session_ids[0]))
         oldest = result.scalar_one()
         assert oldest.revoked_at is not None
 
@@ -225,7 +223,9 @@ class TestListSessions:
             )
 
         sessions = await list_user_sessions(
-            db=db_session, redis=fake_redis, user_id=test_user.id  # type: ignore[arg-type]
+            db=db_session,
+            redis=fake_redis,
+            user_id=test_user.id,  # type: ignore[arg-type]
         )
         assert len(sessions) == 2
 
@@ -249,11 +249,16 @@ class TestListSessions:
         )
 
         await revoke_session(
-            db=db_session, redis=fake_redis, session_id=s1.id, user_id=test_user.id  # type: ignore[arg-type]
+            db=db_session,
+            redis=fake_redis,
+            session_id=s1.id,
+            user_id=test_user.id,  # type: ignore[arg-type]
         )
 
         sessions = await list_user_sessions(
-            db=db_session, redis=fake_redis, user_id=test_user.id  # type: ignore[arg-type]
+            db=db_session,
+            redis=fake_redis,
+            user_id=test_user.id,  # type: ignore[arg-type]
         )
         assert len(sessions) == 1
 
@@ -291,7 +296,10 @@ class TestRevokeSession:
         )
 
         revoked = await revoke_session(
-            db=db_session, redis=fake_redis, session_id=s.id, user_id=test_user.id  # type: ignore[arg-type]
+            db=db_session,
+            redis=fake_redis,
+            session_id=s.id,
+            user_id=test_user.id,  # type: ignore[arg-type]
         )
         assert revoked is True
 
@@ -352,12 +360,16 @@ class TestRevokeAllSessions:
             )
 
         count = await revoke_all_sessions(
-            db=db_session, redis=fake_redis, user_id=test_user.id  # type: ignore[arg-type]
+            db=db_session,
+            redis=fake_redis,
+            user_id=test_user.id,  # type: ignore[arg-type]
         )
         assert count == 3
 
         sessions = await list_user_sessions(
-            db=db_session, redis=fake_redis, user_id=test_user.id  # type: ignore[arg-type]
+            db=db_session,
+            redis=fake_redis,
+            user_id=test_user.id,  # type: ignore[arg-type]
         )
         assert len(sessions) == 0
 
@@ -384,7 +396,9 @@ class TestRevokeAllSessions:
         assert count == 2
 
         sessions = await list_user_sessions(
-            db=db_session, redis=fake_redis, user_id=test_user.id  # type: ignore[arg-type]
+            db=db_session,
+            redis=fake_redis,
+            user_id=test_user.id,  # type: ignore[arg-type]
         )
         assert len(sessions) == 1
         assert sessions[0]["id"] == session_ids[2]
@@ -399,7 +413,8 @@ class TestSessionActivity:
         await fake_redis.hset(redis_key, "last_active", "2026-01-01T00:00:00+00:00")
 
         await update_session_activity(
-            redis=fake_redis, session_id=session_id  # type: ignore[arg-type]
+            redis=fake_redis,
+            session_id=session_id,  # type: ignore[arg-type]
         )
 
         raw = await fake_redis.hget(redis_key, "last_active")
@@ -413,10 +428,12 @@ class TestSessionActivity:
         await fake_redis.hset(redis_key, "user_id", "fake")
 
         assert await is_session_active(
-            redis=fake_redis, session_id=session_id  # type: ignore[arg-type]
+            redis=fake_redis,
+            session_id=session_id,  # type: ignore[arg-type]
         )
 
     async def test_is_session_active_false(self, fake_redis: FakeRedis) -> None:
         assert not await is_session_active(
-            redis=fake_redis, session_id=uuid.uuid4()  # type: ignore[arg-type]
+            redis=fake_redis,
+            session_id=uuid.uuid4(),  # type: ignore[arg-type]
         )

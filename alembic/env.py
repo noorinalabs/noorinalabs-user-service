@@ -3,7 +3,7 @@ from logging.config import fileConfig
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import src.app.models  # ensure all models are registered
+import src.app.models  # noqa: F401 — side-effect import to register models
 from alembic import context
 from src.app.config import get_settings
 from src.app.models.user import Base

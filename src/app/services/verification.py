@@ -118,9 +118,7 @@ async def confirm_verification_token(
     verification.used_at = now
 
     # Mark user email as verified
-    user_result = await db.execute(
-        select(User).where(User.id == verification.user_id)
-    )
+    user_result = await db.execute(select(User).where(User.id == verification.user_id))
     user = user_result.scalar_one_or_none()
     if user is None:
         return None
