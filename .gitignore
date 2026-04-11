@@ -22,6 +22,11 @@ env/
 *.swp
 *.swo
 
+# Claude Code project data (session-local)
+.claude/projects/
+.claude/annunaki/errors.jsonl
+.claude/annunaki/errors.jsonl.bak.*
+
 # mypy
 .mypy_cache/
 
