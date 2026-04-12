@@ -3,20 +3,17 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # --- JWT Token Schemas ---
 
 
 class TokenRequest(BaseModel):
-    """Request body for token issuance after OAuth success."""
+    """Request body for token issuance — requires a one-time auth code from OAuth."""
 
     model_config = ConfigDict(frozen=True)
 
-    user_id: uuid.UUID
-    email: EmailStr
-    roles: list[str] = Field(default_factory=list)
-    subscription_status: str = "free"
+    authorization_code: str
 
 
 class TokenResponse(BaseModel):
@@ -116,7 +113,7 @@ class OAuthUserInfo(BaseModel):
 
 
 class OAuthCallbackResponse(BaseModel):
-    """Response for OAuth callback — returns user data."""
+    """Response for OAuth callback — returns user data and a one-time authorization code."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -127,3 +124,4 @@ class OAuthCallbackResponse(BaseModel):
     is_new_user: bool
     provider: str
     created_at: datetime
+    authorization_code: str

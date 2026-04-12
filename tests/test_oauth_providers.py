@@ -214,10 +214,22 @@ class TestAppleProvider:
     async def test_get_user_info_from_id_token(self) -> None:
         provider = AppleOAuthProvider(_make_settings())
 
-        with patch("jose.jwt.get_unverified_claims") as mock_get_claims:
-            mock_jwt = MagicMock()
-            mock_jwt.get_unverified_claims = mock_get_claims
-            mock_get_claims.return_value = {
+        # Mock the JWKS fetch and JWT decode
+        mock_jwks_response = MagicMock()
+        mock_jwks_response.json.return_value = {"keys": [{"kty": "RSA", "kid": "test"}]}
+        mock_jwks_response.raise_for_status = MagicMock()
+
+        with (
+            patch("src.app.services.oauth.httpx.AsyncClient") as mock_client_cls,
+            patch("jose.jwt.decode") as mock_decode,
+        ):
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_jwks_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            mock_decode.return_value = {
                 "sub": "apple-uid-001",
                 "email": "apple@example.com",
             }
@@ -226,6 +238,16 @@ class TestAppleProvider:
             assert info.provider_account_id == "apple-uid-001"
             assert info.email == "apple@example.com"
             assert info.display_name is None
+
+            # Verify JWKS was fetched and decode was called with verification
+            mock_client.get.assert_called_once_with("https://appleid.apple.com/auth/keys")
+            mock_decode.assert_called_once_with(
+                "fake-id-token",
+                {"keys": [{"kty": "RSA", "kid": "test"}]},
+                algorithms=["RS256"],
+                audience="apple-client-id",
+                issuer="https://appleid.apple.com",
+            )
 
 
 class TestFacebookProvider:

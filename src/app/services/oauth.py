@@ -255,12 +255,23 @@ class AppleOAuthProvider(BaseOAuthProvider):
 
         Apple does not have a userinfo endpoint — user data is in the id_token JWT.
         The access_token parameter here should be the id_token from the token response.
+        Signature is verified against Apple's published JWKS.
         """
         from jose import jwt as jose_jwt
 
-        # Apple id_tokens are signed with RS256; we verify audience/issuer but skip
-        # full signature verification for now (would need Apple's public keys).
-        claims = jose_jwt.get_unverified_claims(access_token)
+        # Fetch Apple's public keys and verify the id_token signature
+        async with httpx.AsyncClient() as client:
+            jwks_resp = await client.get("https://appleid.apple.com/auth/keys")
+            jwks_resp.raise_for_status()
+            apple_jwks = jwks_resp.json()
+
+        claims = jose_jwt.decode(
+            access_token,
+            apple_jwks,
+            algorithms=["RS256"],
+            audience=self.client_id,
+            issuer="https://appleid.apple.com",
+        )
         return OAuthUserInfo(
             provider=self.provider.value,
             provider_account_id=claims["sub"],
