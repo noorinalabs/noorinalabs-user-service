@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -9,11 +10,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from jose.exceptions import JWTError
+from redis.asyncio import Redis
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import Settings, get_settings
-from src.app.database import get_db_session
+from src.app.database import get_db_session, get_redis
 from src.app.models.user import User
 from src.app.schemas.auth import (
     OAuthCallbackRequest,
@@ -41,6 +43,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbDep = Annotated[AsyncSession, Depends(get_db_session)]
+RedisDep = Annotated[Redis, Depends(get_redis)]
+
+AUTH_CODE_PREFIX = "auth_code:"
+AUTH_CODE_TTL_SECONDS = 60
 
 VALID_PROVIDERS = {p.value for p in OAuthProvider}
 
@@ -54,19 +60,38 @@ async def issue_token(
     request: Request,
     settings: SettingsDep,
     db: DbDep,
+    redis: RedisDep,
 ) -> TokenResponse:
-    """Issue an access + refresh token pair after OAuth success."""
+    """Issue an access + refresh token pair after OAuth success.
+
+    Requires a one-time authorization code issued by the OAuth callback endpoint.
+    The code is single-use and expires after 60 seconds.
+    """
+    redis_key = f"{AUTH_CODE_PREFIX}{body.authorization_code}"
+    raw = await redis.getdel(redis_key)
+    if raw is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired authorization code",
+        )
+
+    auth_data: dict[str, str | list[str]] = json.loads(raw)
+    user_id = uuid.UUID(str(auth_data["user_id"]))
+    email = str(auth_data["email"])
+    roles: list[str] = auth_data.get("roles", [])  # type: ignore[assignment]
+    subscription_status = str(auth_data.get("subscription_status", "free"))
+
     access_token, expires_at = create_access_token(
         settings=settings,
-        user_id=body.user_id,
-        email=body.email,
-        roles=body.roles,
-        subscription_status=body.subscription_status,
+        user_id=user_id,
+        email=email,
+        roles=roles,
+        subscription_status=subscription_status,
     )
     refresh_token = create_refresh_token()
     await store_refresh_token(
         db=db,
-        user_id=body.user_id,
+        user_id=user_id,
         refresh_token=refresh_token,
         expires_days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS,
         ip_address=request.client.host if request.client else None,
@@ -210,8 +235,13 @@ async def oauth_callback(
     body: OAuthCallbackRequest,
     settings: SettingsDep,
     db: AsyncSession = Depends(get_db_session),  # noqa: B008
+    redis: Redis = Depends(get_redis),  # noqa: B008
 ) -> OAuthCallbackResponse:
-    """Handle the OAuth callback — exchange code, find/create user, return user data."""
+    """Handle the OAuth callback — exchange code, find/create user, return user data.
+
+    Issues a one-time authorization code that the client must exchange at /auth/token
+    to obtain JWT tokens. This ensures tokens can only be minted after a real OAuth flow.
+    """
     if provider not in VALID_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
 
@@ -254,6 +284,34 @@ async def oauth_callback(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Fetch user roles and subscription for the authorization code payload
+    roles_result = await db.execute(
+        text(
+            "SELECT r.name FROM roles r "
+            "JOIN user_roles ur ON ur.role_id = r.id "
+            "WHERE ur.user_id = :uid"
+        ),
+        {"uid": result.user.id},
+    )
+    roles = [row[0] for row in roles_result.fetchall()]
+    subscription_status = await get_subscription_status(db, result.user.id)
+
+    # Issue a one-time authorization code stored in Redis
+    authorization_code = secrets.token_urlsafe(48)
+    auth_data = json.dumps(
+        {
+            "user_id": str(result.user.id),
+            "email": result.user.email,
+            "roles": roles,
+            "subscription_status": subscription_status,
+        }
+    )
+    await redis.setex(
+        f"{AUTH_CODE_PREFIX}{authorization_code}",
+        AUTH_CODE_TTL_SECONDS,
+        auth_data,
+    )
+
     return OAuthCallbackResponse(
         user_id=result.user.id,
         email=result.user.email,
@@ -262,4 +320,5 @@ async def oauth_callback(
         is_new_user=result.is_new_user,
         provider=provider,
         created_at=result.user.created_at,
+        authorization_code=authorization_code,
     )

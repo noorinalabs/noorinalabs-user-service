@@ -170,7 +170,7 @@ def _auth_header(user: User) -> dict[str, str]:
 
 
 def _webhook_signature(body: bytes) -> str:
-    sig = hmac_mod.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+    sig = hmac_mod.HMAC(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
     return f"sha256={sig}"
 
 

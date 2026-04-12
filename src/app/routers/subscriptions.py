@@ -101,7 +101,7 @@ async def get_user_subscription(
 
 def _verify_webhook_signature(body: bytes, signature: str, secret: str) -> bool:
     """Verify HMAC-SHA256 webhook signature."""
-    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    expected = hmac.HMAC(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(f"sha256={expected}", signature)
 
 
