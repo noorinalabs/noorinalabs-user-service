@@ -1,0 +1,15 @@
+# Pre-commit hooks for noorinalabs-user-service
+# Install: uvx pre-commit install
+# Docs: https://pre-commit.com/
+#
+# ruff-format runs first so format fixes don't trigger re-lint.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.6
+    hooks:
+      - id: ruff-format
+        name: ruff-format
+      - id: ruff
+        args: [--fix]
+        name: ruff-lint
