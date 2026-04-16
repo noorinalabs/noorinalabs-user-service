@@ -39,6 +39,7 @@ dev = [
     "types-python-jose>=3.3.0",
     "types-pyasn1>=0.6.0",
     "aiosqlite>=0.20.0",
+    "neo4j>=6.1.0",
 ]
 
 [tool.ruff]
