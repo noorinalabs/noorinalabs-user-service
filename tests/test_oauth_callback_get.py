@@ -172,7 +172,10 @@ class TestOAuthCallbackGet:
         assert resp.status_code == 302
         location = resp.headers["location"]
         parsed = urlparse(location)
-        assert parsed.path == "/auth/callback"
+        # Path must include the provider segment to match the frontend React
+        # Router route `auth/callback/:provider`. Regression guard for the Anya
+        # must-fix on PR#67.
+        assert parsed.path == "/auth/callback/google"
         qs = parse_qs(parsed.query)
         assert "token" in qs
         assert qs["is_new_user"] == ["0"]
@@ -194,6 +197,10 @@ class TestOAuthCallbackGet:
                 params={"code": "abc123", "state": "nope"},
             )
         assert resp.status_code == 302
+        # Error redirects must also carry the provider segment so the frontend
+        # route matches and the `error=` param is read.
+        parsed = urlparse(resp.headers["location"])
+        assert parsed.path == "/auth/callback/google"
         assert "error=invalid_state" in resp.headers["location"]
 
     @pytest.mark.asyncio
@@ -254,6 +261,41 @@ class TestOAuthCallbackGet:
                 )
         assert resp.status_code == 302
         assert "error=oauth_exchange_failed" in resp.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_user_info_failure_redirects_with_error(self, client_factory: Any) -> None:
+        """Provider returns tokens but user-info fetch fails — distinct from exchange_failure.
+
+        Filed under the review-requested gap on #70. Mirrors the exchange test but
+        keeps exchange_code succeeding so we exercise the second try/except branch.
+        """
+        state = "valid-state-ui"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
+        }
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
+        oauth_mock.get_user_info = AsyncMock(side_effect=RuntimeError("userinfo 500"))
+
+        with patch(
+            "src.app.routers.auth.get_oauth_provider",
+            return_value=oauth_mock,
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc", "state": state},
+                )
+        assert resp.status_code == 302
+        # Currently aliased to the same error code as exchange failures — the
+        # frontend only distinguishes "provider misbehaved" from the other cases.
+        # If that ever splits, this test will catch the unintentional collapse.
+        parsed = urlparse(resp.headers["location"])
+        assert parsed.path == "/auth/callback/google"
+        assert "error=oauth_exchange_failed" in resp.headers["location"]
+        # exchange_code must have been called (so we're truly testing the second branch)
+        oauth_mock.exchange_code.assert_awaited_once()
+        oauth_mock.get_user_info.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_state_is_consumed_exactly_once(self, client_factory: Any) -> None:

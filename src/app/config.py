@@ -74,8 +74,13 @@ class Settings(BaseSettings):
     AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
 
     # OAuth — Server-side flow (GET callback)
-    # Frontend destination after successful OAuth. Receives ?token=...&is_new_user=...
-    # on success, or ?error=<code> on failure. May be absolute or same-origin relative.
+    # BASE path for the frontend destination after successful OAuth. The handler
+    # always appends `/{provider}` to match the frontend route
+    # `auth/callback/:provider` (required path param). Final shape:
+    #   {AUTH_OAUTH_POST_LOGIN_URL}/{provider}?token=...&is_new_user=0|1
+    # or on failure:
+    #   {AUTH_OAUTH_POST_LOGIN_URL}/{provider}?error=<code>
+    # May be absolute or same-origin relative. Do NOT include `/{provider}` — appended.
     AUTH_OAUTH_POST_LOGIN_URL: str = "/auth/callback"
     # TTL for state/code_verifier entries in Redis (upper bound on OAuth round-trip)
     AUTH_OAUTH_STATE_TTL_SECONDS: int = 600

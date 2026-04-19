@@ -232,11 +232,33 @@ async def validate_token(
 # --- OAuth Endpoints ---
 
 
-def _build_error_redirect(settings: Settings, error_code: str) -> RedirectResponse:
+def _build_post_login_url(settings: Settings, provider: str, params: dict[str, str]) -> str:
+    """Build the post-login redirect URL.
+
+    `AUTH_OAUTH_POST_LOGIN_URL` is the BASE path (e.g. `/auth/callback`); the
+    `/{provider}` segment is always appended here so the URL matches the
+    frontend's React Router route `auth/callback/:provider` (required param).
+    Per review on #66 / fix for isnad-graph#824 — picked option (a) from Anya's
+    review: setting is base, provider is always appended by the handler. This
+    avoids template-substitution footguns ({provider} stray braces, missing
+    placeholders, etc.) and keeps the setting a plain path string.
+
+    `provider` comes from the FastAPI path parameter, which is validated
+    against `VALID_PROVIDERS` in every caller — never user-supplied arbitrary
+    text at this point.
+    """
+    base = (settings.AUTH_OAUTH_POST_LOGIN_URL or "/").rstrip("/")
+    # URL-encode the provider even though we only ever pass validated values —
+    # belt-and-braces in case VALID_PROVIDERS ever includes a special character.
+    path = f"{base}/{urllib.parse.quote(provider, safe='')}"
+    if not params:
+        return path
+    return f"{path}?{urllib.parse.urlencode(params)}"
+
+
+def _build_error_redirect(settings: Settings, provider: str, error_code: str) -> RedirectResponse:
     """Build a RedirectResponse to the frontend post-login URL with an error param."""
-    base = settings.AUTH_OAUTH_POST_LOGIN_URL or "/"
-    separator = "&" if "?" in base else "?"
-    url = f"{base}{separator}error={urllib.parse.quote(error_code)}"
+    url = _build_post_login_url(settings, provider, {"error": error_code})
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
 
@@ -308,26 +330,26 @@ async def oauth_callback_get(
     """
     # Provider-denied consent (e.g. "access_denied") → bounce to frontend with error
     if error:
-        return _build_error_redirect(settings, OAUTH_ERROR_PROVIDER_DENIED)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_PROVIDER_DENIED)
 
     if provider not in VALID_PROVIDERS:
-        return _build_error_redirect(settings, OAUTH_ERROR_UNSUPPORTED_PROVIDER)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_UNSUPPORTED_PROVIDER)
 
     if not code or not state:
-        return _build_error_redirect(settings, OAUTH_ERROR_INVALID_STATE)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_INVALID_STATE)
 
     # Validate state (CSRF) and fetch the PKCE code_verifier. getdel() ensures the
     # state is consumed exactly once — replay of the same callback URL is blocked.
     state_key = f"{OAUTH_STATE_PREFIX}{state}"
     raw_state = await redis.getdel(state_key)
     if raw_state is None:
-        return _build_error_redirect(settings, OAUTH_ERROR_INVALID_STATE)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_INVALID_STATE)
 
     state_data: dict[str, str] = json.loads(raw_state)
     # Defense in depth: the state entry is keyed by provider at create time; if the
     # user tampered with the `{provider}` path segment, refuse.
     if state_data.get("provider") != provider:
-        return _build_error_redirect(settings, OAUTH_ERROR_INVALID_STATE)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_INVALID_STATE)
     code_verifier = state_data["code_verifier"]
 
     redirect_uri = f"{settings.AUTH_OAUTH_REDIRECT_BASE_URL}/auth/oauth/{provider}/callback"
@@ -338,7 +360,7 @@ async def oauth_callback_get(
     try:
         tokens = await oauth.exchange_code(code, code_verifier, redirect_uri)
     except Exception:
-        return _build_error_redirect(settings, OAUTH_ERROR_EXCHANGE_FAILED)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_EXCHANGE_FAILED)
 
     # Fetch user info. Apple returns identity in the id_token; others use access_token.
     if provider == "apple":
@@ -349,7 +371,7 @@ async def oauth_callback_get(
     try:
         user_info = await oauth.get_user_info(token_for_user_info)
     except Exception:
-        return _build_error_redirect(settings, OAUTH_ERROR_USER_INFO_FAILED)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_USER_INFO_FAILED)
 
     # Find-or-create user, link OAuth account
     try:
@@ -364,7 +386,7 @@ async def oauth_callback_get(
     except ValueError:
         # Missing email / email-mismatch-style errors bounce the user back with a
         # readable error code the frontend can render.
-        return _build_error_redirect(settings, OAUTH_ERROR_EMAIL_MISMATCH)
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_EMAIL_MISMATCH)
 
     # Collect roles + subscription for the access-token claims
     roles_result = await db.execute(
@@ -399,19 +421,21 @@ async def oauth_callback_get(
         user_agent=request.headers.get("user-agent"),
     )
 
-    # Build the success redirect with the access token and new-user flag.
-    post_login_base = settings.AUTH_OAUTH_POST_LOGIN_URL or "/"
-    separator = "&" if "?" in post_login_base else "?"
-    params = urllib.parse.urlencode(
+    # Build the success redirect with the access token and new-user flag. The
+    # `/{provider}` segment is appended by _build_post_login_url to match the
+    # frontend route `auth/callback/:provider` (required param — see
+    # isnad-graph/frontend/src/App.tsx:57 and isnad-graph#824).
+    redirect_url = _build_post_login_url(
+        settings,
+        provider,
         {
             "token": access_token,
             "is_new_user": "1" if result.is_new_user else "0",
             # OAuth users are created with email_verified=True, so verification is
             # never needed via this flow — but we emit the flag for frontend parity.
             "needs_verification": "0",
-        }
+        },
     )
-    redirect_url = f"{post_login_base}{separator}{params}"
     response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
     # Refresh-token cookie: httpOnly + SameSite=Lax (Lax is required so the cookie
