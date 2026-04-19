@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     # OAuth — Redirect base URL
     AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
 
+    # OAuth — Server-side flow (GET callback)
+    # Frontend destination after successful OAuth. Receives ?token=...&is_new_user=...
+    # on success, or ?error=<code> on failure. May be absolute or same-origin relative.
+    AUTH_OAUTH_POST_LOGIN_URL: str = "/auth/callback"
+    # TTL for state/code_verifier entries in Redis (upper bound on OAuth round-trip)
+    AUTH_OAUTH_STATE_TTL_SECONDS: int = 600
+    # Whether to set the refresh-token cookie with Secure=True. Must be True in prod;
+    # set to False in local HTTP dev.
+    AUTH_OAUTH_REFRESH_COOKIE_SECURE: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
