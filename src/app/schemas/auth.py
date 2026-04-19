@@ -81,21 +81,16 @@ class JWKSResponse(BaseModel):
 
 
 class OAuthLoginResponse(BaseModel):
-    """Response for OAuth login initiation — returns the authorization URL."""
+    """Response for OAuth login initiation — returns the authorization URL.
+
+    `state` and `code_verifier` are retained for backwards compatibility with
+    earlier SPA-driven callback flows. As of #66 the server-side GET callback
+    reads them from Redis; clients may ignore both fields.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     authorization_url: str
-    state: str
-    code_verifier: str
-
-
-class OAuthCallbackRequest(BaseModel):
-    """Request body for OAuth callback."""
-
-    model_config = ConfigDict(frozen=True)
-
-    code: str
     state: str
     code_verifier: str
 
@@ -110,18 +105,3 @@ class OAuthUserInfo(BaseModel):
     email: str | None = None
     display_name: str | None = None
     avatar_url: str | None = None
-
-
-class OAuthCallbackResponse(BaseModel):
-    """Response for OAuth callback — returns user data and a one-time authorization code."""
-
-    model_config = ConfigDict(frozen=True)
-
-    user_id: uuid.UUID
-    email: str
-    display_name: str | None = None
-    avatar_url: str | None = None
-    is_new_user: bool
-    provider: str
-    created_at: datetime
-    authorization_code: str

@@ -1,14 +1,27 @@
-"""Auth routes — JWT token endpoints and OAuth login/callback."""
+"""Auth routes — JWT token endpoints and OAuth login/callback.
+
+OAuth flow (server-side, post #66):
+  1. Frontend hits GET /auth/oauth/{provider}/login — backend stashes state +
+     code_verifier in Redis (keyed by state) and returns the authorization_url.
+  2. Frontend redirects the browser to authorization_url.
+  3. Provider redirects the browser to GET /auth/oauth/{provider}/callback?code=..&state=..
+  4. Backend validates state, exchanges code, upserts user, mints tokens, sets the
+     refresh_token as an httpOnly cookie, and redirects the browser to
+     AUTH_OAUTH_POST_LOGIN_URL with ?token=<access>&is_new_user=0|1 on success,
+     or ?error=<code> on failure.
+"""
 
 from __future__ import annotations
 
 import json
 import secrets
+import urllib.parse
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import RedirectResponse
 from jose.exceptions import JWTError
 from redis.asyncio import Redis
 from sqlalchemy import select, text
@@ -18,8 +31,6 @@ from src.app.config import Settings, get_settings
 from src.app.database import get_db_session, get_redis
 from src.app.models.user import User
 from src.app.schemas.auth import (
-    OAuthCallbackRequest,
-    OAuthCallbackResponse,
     OAuthLoginResponse,
     RefreshRequest,
     RevokeRequest,
@@ -47,6 +58,18 @@ RedisDep = Annotated[Redis, Depends(get_redis)]
 
 AUTH_CODE_PREFIX = "auth_code:"
 AUTH_CODE_TTL_SECONDS = 60
+
+# Redis key prefix for in-flight OAuth state (CSRF + PKCE verifier)
+OAUTH_STATE_PREFIX = "oauth_state:"
+
+# Error codes emitted in the post-login redirect URL. Kept in sync with
+# isnad-graph frontend AuthCallbackPage.tsx ERROR_MESSAGES.
+OAUTH_ERROR_INVALID_STATE = "invalid_state"
+OAUTH_ERROR_EXCHANGE_FAILED = "oauth_exchange_failed"
+OAUTH_ERROR_USER_INFO_FAILED = "oauth_exchange_failed"
+OAUTH_ERROR_EMAIL_MISMATCH = "email_mismatch"
+OAUTH_ERROR_PROVIDER_DENIED = "provider_denied"
+OAUTH_ERROR_UNSUPPORTED_PROVIDER = "unsupported_provider"
 
 VALID_PROVIDERS = {p.value for p in OAuthProvider}
 
@@ -209,15 +232,62 @@ async def validate_token(
 # --- OAuth Endpoints ---
 
 
+def _build_post_login_url(settings: Settings, provider: str, params: dict[str, str]) -> str:
+    """Build the post-login redirect URL.
+
+    `AUTH_OAUTH_POST_LOGIN_URL` is the BASE path (e.g. `/auth/callback`); the
+    `/{provider}` segment is always appended here so the URL matches the
+    frontend's React Router route `auth/callback/:provider` (required param).
+    Per review on #66 / fix for isnad-graph#824 — picked option (a) from Anya's
+    review: setting is base, provider is always appended by the handler. This
+    avoids template-substitution footguns ({provider} stray braces, missing
+    placeholders, etc.) and keeps the setting a plain path string.
+
+    `provider` comes from the FastAPI path parameter, which is validated
+    against `VALID_PROVIDERS` in every caller — never user-supplied arbitrary
+    text at this point.
+    """
+    base = (settings.AUTH_OAUTH_POST_LOGIN_URL or "/").rstrip("/")
+    # URL-encode the provider even though we only ever pass validated values —
+    # belt-and-braces in case VALID_PROVIDERS ever includes a special character.
+    path = f"{base}/{urllib.parse.quote(provider, safe='')}"
+    if not params:
+        return path
+    return f"{path}?{urllib.parse.urlencode(params)}"
+
+
+def _build_error_redirect(settings: Settings, provider: str, error_code: str) -> RedirectResponse:
+    """Build a RedirectResponse to the frontend post-login URL with an error param."""
+    url = _build_post_login_url(settings, provider, {"error": error_code})
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
 @router.get("/oauth/{provider}/login", response_model=OAuthLoginResponse)
-async def oauth_login(provider: str, settings: SettingsDep) -> OAuthLoginResponse:
-    """Generate an authorization URL with PKCE for the given provider."""
+async def oauth_login(
+    provider: str,
+    settings: SettingsDep,
+    redis: RedisDep,
+) -> OAuthLoginResponse:
+    """Generate an authorization URL with PKCE for the given provider.
+
+    The state and code_verifier are stored in Redis (keyed by state) for the
+    server-side callback handler to retrieve. Returning them to the client is
+    kept for backwards compatibility with earlier SPA integrations but is no
+    longer required for the GET callback flow.
+    """
     if provider not in VALID_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
 
     state = secrets.token_urlsafe(32)
     code_verifier, code_challenge = generate_pkce_pair()
     redirect_uri = f"{settings.AUTH_OAUTH_REDIRECT_BASE_URL}/auth/oauth/{provider}/callback"
+
+    # Stash state + code_verifier + provider so the GET callback can verify and exchange.
+    await redis.setex(
+        f"{OAUTH_STATE_PREFIX}{state}",
+        settings.AUTH_OAUTH_STATE_TTL_SECONDS,
+        json.dumps({"provider": provider, "code_verifier": code_verifier}),
+    )
 
     oauth = get_oauth_provider(provider, settings)
     authorization_url = oauth.get_authorization_url(state, code_challenge, redirect_uri)
@@ -229,49 +299,81 @@ async def oauth_login(provider: str, settings: SettingsDep) -> OAuthLoginRespons
     )
 
 
-@router.post("/oauth/{provider}/callback", response_model=OAuthCallbackResponse)
-async def oauth_callback(
+@router.get("/oauth/{provider}/callback", response_class=RedirectResponse)
+async def oauth_callback_get(
     provider: str,
-    body: OAuthCallbackRequest,
+    request: Request,
     settings: SettingsDep,
-    db: AsyncSession = Depends(get_db_session),  # noqa: B008
-    redis: Redis = Depends(get_redis),  # noqa: B008
-) -> OAuthCallbackResponse:
-    """Handle the OAuth callback — exchange code, find/create user, return user data.
+    db: DbDep,
+    redis: RedisDep,
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+) -> RedirectResponse:
+    """Server-side OAuth callback — handles the provider's GET redirect.
 
-    Issues a one-time authorization code that the client must exchange at /auth/token
-    to obtain JWT tokens. This ensures tokens can only be minted after a real OAuth flow.
+    This is the endpoint OAuth providers (Google, GitHub, Apple, Facebook) redirect
+    the user's browser to after consent. It:
+      1. Validates state (CSRF) against Redis, retrieves the stored code_verifier.
+      2. Exchanges the authorization code for provider tokens.
+      3. Resolves user info and finds-or-creates the local user.
+      4. Mints an access token + refresh token, sets the refresh token as an
+         httpOnly cookie, and redirects the browser to AUTH_OAUTH_POST_LOGIN_URL
+         with the access token on a query param (matching the frontend
+         AuthCallbackPage contract).
+
+    On any error, redirects to AUTH_OAUTH_POST_LOGIN_URL with ?error=<code>. We
+    use browser redirects for every exit path because this URL is hit by the
+    user's browser, not by JS — a JSON error response would be a dead end.
+
+    Issue: noorinalabs/noorinalabs-user-service#66.
     """
+    # Provider-denied consent (e.g. "access_denied") → bounce to frontend with error
+    if error:
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_PROVIDER_DENIED)
+
     if provider not in VALID_PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_UNSUPPORTED_PROVIDER)
+
+    if not code or not state:
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_INVALID_STATE)
+
+    # Validate state (CSRF) and fetch the PKCE code_verifier. getdel() ensures the
+    # state is consumed exactly once — replay of the same callback URL is blocked.
+    state_key = f"{OAUTH_STATE_PREFIX}{state}"
+    raw_state = await redis.getdel(state_key)
+    if raw_state is None:
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_INVALID_STATE)
+
+    state_data: dict[str, str] = json.loads(raw_state)
+    # Defense in depth: the state entry is keyed by provider at create time; if the
+    # user tampered with the `{provider}` path segment, refuse.
+    if state_data.get("provider") != provider:
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_INVALID_STATE)
+    code_verifier = state_data["code_verifier"]
 
     redirect_uri = f"{settings.AUTH_OAUTH_REDIRECT_BASE_URL}/auth/oauth/{provider}/callback"
     oauth = get_oauth_provider(provider, settings)
 
-    # Exchange authorization code for tokens
+    # Exchange code → provider tokens. Provider failures (network, 4xx, malformed
+    # response) must bounce the user back with a readable error, not leak as 500.
     try:
-        tokens = await oauth.exchange_code(body.code, body.code_verifier, redirect_uri)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to exchange authorization code with the provider",
-        ) from exc
+        tokens = await oauth.exchange_code(code, code_verifier, redirect_uri)
+    except Exception:
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_EXCHANGE_FAILED)
 
-    # For Apple, user info is in id_token; for others, use access_token
+    # Fetch user info. Apple returns identity in the id_token; others use access_token.
     if provider == "apple":
         token_for_user_info: str = tokens.get("id_token", "")
     else:
-        token_for_user_info = tokens["access_token"]
+        token_for_user_info = tokens.get("access_token", "")
 
     try:
         user_info = await oauth.get_user_info(token_for_user_info)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to retrieve user info from the provider",
-        ) from exc
+    except Exception:
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_USER_INFO_FAILED)
 
-    # Find or create user, link OAuth account
+    # Find-or-create user, link OAuth account
     try:
         result = await find_or_create_oauth_user(
             db,
@@ -281,10 +383,12 @@ async def oauth_callback(
             display_name=user_info.display_name,
             avatar_url=user_info.avatar_url,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError:
+        # Missing email / email-mismatch-style errors bounce the user back with a
+        # readable error code the frontend can render.
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_EMAIL_MISMATCH)
 
-    # Fetch user roles and subscription for the authorization code payload
+    # Collect roles + subscription for the access-token claims
     roles_result = await db.execute(
         text(
             "SELECT r.name FROM roles r "
@@ -296,29 +400,54 @@ async def oauth_callback(
     roles = [row[0] for row in roles_result.fetchall()]
     subscription_status = await get_subscription_status(db, result.user.id)
 
-    # Issue a one-time authorization code stored in Redis
-    authorization_code = secrets.token_urlsafe(48)
-    auth_data = json.dumps(
-        {
-            "user_id": str(result.user.id),
-            "email": result.user.email,
-            "roles": roles,
-            "subscription_status": subscription_status,
-        }
-    )
-    await redis.setex(
-        f"{AUTH_CODE_PREFIX}{authorization_code}",
-        AUTH_CODE_TTL_SECONDS,
-        auth_data,
-    )
-
-    return OAuthCallbackResponse(
+    # Mint tokens directly (no intermediate one-time code — the browser round-trip
+    # via redirect is already the single-use handoff). The access token goes on the
+    # redirect URL (the frontend AuthCallbackPage stores it in localStorage); the
+    # refresh token goes in an httpOnly cookie so JS cannot read it.
+    access_token, _ = create_access_token(
+        settings=settings,
         user_id=result.user.id,
         email=result.user.email,
-        display_name=result.user.display_name,
-        avatar_url=result.user.avatar_url,
-        is_new_user=result.is_new_user,
-        provider=provider,
-        created_at=result.user.created_at,
-        authorization_code=authorization_code,
+        roles=roles,
+        subscription_status=subscription_status,
     )
+    refresh_token = create_refresh_token()
+    await store_refresh_token(
+        db=db,
+        user_id=result.user.id,
+        refresh_token=refresh_token,
+        expires_days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    # Build the success redirect with the access token and new-user flag. The
+    # `/{provider}` segment is appended by _build_post_login_url to match the
+    # frontend route `auth/callback/:provider` (required param — see
+    # isnad-graph/frontend/src/App.tsx:57 and isnad-graph#824).
+    redirect_url = _build_post_login_url(
+        settings,
+        provider,
+        {
+            "token": access_token,
+            "is_new_user": "1" if result.is_new_user else "0",
+            # OAuth users are created with email_verified=True, so verification is
+            # never needed via this flow — but we emit the flag for frontend parity.
+            "needs_verification": "0",
+        },
+    )
+    response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+    # Refresh-token cookie: httpOnly + SameSite=Lax (Lax is required so the cookie
+    # survives the cross-site redirect from the OAuth provider back to us; Strict
+    # would drop it on the first hop). Secure flag is env-gated for local HTTP dev.
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+        httponly=True,
+        secure=settings.AUTH_OAUTH_REFRESH_COOKIE_SECURE,
+        samesite="lax",
+        path="/auth",
+    )
+    return response
