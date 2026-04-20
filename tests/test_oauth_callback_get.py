@@ -393,9 +393,7 @@ class TestExchangeLoggingDiagnostics:
     ) -> None:
         state = "log-state-1"
         seed = {
-            f"oauth_state:{state}": json.dumps(
-                {"provider": "google", "code_verifier": "verifier"}
-            ),
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
         }
         oauth_mock = MagicMock()
         oauth_mock.exchange_code = AsyncMock(side_effect=RuntimeError("boom"))
@@ -428,9 +426,7 @@ class TestExchangeLoggingDiagnostics:
     ) -> None:
         state = "log-state-2"
         seed = {
-            f"oauth_state:{state}": json.dumps(
-                {"provider": "google", "code_verifier": "verifier"}
-            ),
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
         }
         # Build a real httpx.HTTPStatusError so the handler's response.text/.status_code work.
         request = httpx.Request("POST", "https://oauth2.googleapis.com/token")
@@ -472,9 +468,7 @@ class TestExchangeLoggingDiagnostics:
     ) -> None:
         state = "log-state-3"
         seed = {
-            f"oauth_state:{state}": json.dumps(
-                {"provider": "github", "code_verifier": "verifier"}
-            ),
+            f"oauth_state:{state}": json.dumps({"provider": "github", "code_verifier": "verifier"}),
         }
         oauth_mock = MagicMock()
         oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "ghtoken"})
@@ -506,9 +500,7 @@ class TestExchangeLoggingDiagnostics:
     ) -> None:
         state = "log-state-4"
         seed = {
-            f"oauth_state:{state}": json.dumps(
-                {"provider": "google", "code_verifier": "verifier"}
-            ),
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
         }
         oauth_mock = MagicMock()
         oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
