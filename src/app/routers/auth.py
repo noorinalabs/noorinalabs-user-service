@@ -14,12 +14,14 @@ OAuth flow (server-side, post #66):
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import urllib.parse
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from jose.exceptions import JWTError
@@ -49,6 +51,8 @@ from src.app.services.token import (
     validate_refresh_token,
 )
 from src.app.services.user import find_or_create_oauth_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -359,7 +363,26 @@ async def oauth_callback_get(
     # response) must bounce the user back with a readable error, not leak as 500.
     try:
         tokens = await oauth.exchange_code(code, code_verifier, redirect_uri)
-    except Exception:
+    except httpx.HTTPStatusError as exc:
+        # Provider returned a 4xx/5xx — body usually contains the error code
+        # (e.g. invalid_grant, redirect_uri_mismatch). Excerpt is safe to log:
+        # OAuth error responses are diagnostic codes, not user data.
+        body_excerpt = exc.response.text[:500]
+        logger.exception(
+            "OAuth exchange HTTP error: provider=%s redirect_uri=%s status=%s body=%s",
+            provider,
+            redirect_uri,
+            exc.response.status_code,
+            body_excerpt,
+        )
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_EXCHANGE_FAILED)
+    except Exception as exc:
+        logger.exception(
+            "OAuth exchange unexpected error: provider=%s redirect_uri=%s exc_type=%s",
+            provider,
+            redirect_uri,
+            type(exc).__name__,
+        )
         return _build_error_redirect(settings, provider, OAUTH_ERROR_EXCHANGE_FAILED)
 
     # Fetch user info. Apple returns identity in the id_token; others use access_token.
@@ -370,7 +393,21 @@ async def oauth_callback_get(
 
     try:
         user_info = await oauth.get_user_info(token_for_user_info)
-    except Exception:
+    except httpx.HTTPStatusError as exc:
+        body_excerpt = exc.response.text[:500]
+        logger.exception(
+            "OAuth user_info HTTP error: provider=%s status=%s body=%s",
+            provider,
+            exc.response.status_code,
+            body_excerpt,
+        )
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_USER_INFO_FAILED)
+    except Exception as exc:
+        logger.exception(
+            "OAuth user_info unexpected error: provider=%s exc_type=%s",
+            provider,
+            type(exc).__name__,
+        )
         return _build_error_redirect(settings, provider, OAUTH_ERROR_USER_INFO_FAILED)
 
     # Find-or-create user, link OAuth account
@@ -383,9 +420,14 @@ async def oauth_callback_get(
             display_name=user_info.display_name,
             avatar_url=user_info.avatar_url,
         )
-    except ValueError:
+    except ValueError as exc:
         # Missing email / email-mismatch-style errors bounce the user back with a
         # readable error code the frontend can render.
+        logger.warning(
+            "OAuth user upsert rejected: provider=%s exc=%s",
+            provider,
+            str(exc)[:200],
+        )
         return _build_error_redirect(settings, provider, OAUTH_ERROR_EMAIL_MISMATCH)
 
     # Collect roles + subscription for the access-token claims

@@ -15,6 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -372,3 +373,168 @@ class TestPostCallbackRemoved:
             )
         # FastAPI replies 405 when only GET is registered on the path.
         assert resp.status_code == 405
+
+
+class TestExchangeLoggingDiagnostics:
+    """Issue #71 — silent OAuth exception handlers must emit structured logs.
+
+    Prior to this issue, any failure in exchange_code/get_user_info/upsert was
+    swallowed and the user was bounced with `?error=oauth_exchange_failed` and
+    no log line. These tests pin the new contract: each exception path emits
+    one log record on the `src.app.routers.auth` logger naming the provider
+    (and HTTP status/body excerpt for httpx errors).
+    """
+
+    @pytest.mark.asyncio
+    async def test_exchange_unexpected_exception_logs_provider(
+        self,
+        client_factory: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        state = "log-state-1"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
+        }
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            caplog.at_level("ERROR", logger="src.app.routers.auth"),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc", "state": state},
+                )
+
+        assert resp.status_code == 302
+        records = [r for r in caplog.records if r.name == "src.app.routers.auth"]
+        assert len(records) == 1, f"expected 1 log record, got {len(records)}"
+        msg = records[0].getMessage()
+        assert "OAuth exchange unexpected error" in msg
+        assert "google" in msg
+        assert "RuntimeError" in msg
+        # exception info captured (logger.exception sets exc_info)
+        assert records[0].exc_info is not None
+
+    @pytest.mark.asyncio
+    async def test_exchange_httpx_status_error_logs_status_and_body(
+        self,
+        client_factory: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        state = "log-state-2"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
+        }
+        # Build a real httpx.HTTPStatusError so the handler's response.text/.status_code work.
+        request = httpx.Request("POST", "https://oauth2.googleapis.com/token")
+        response = httpx.Response(
+            400,
+            request=request,
+            content=b'{"error":"invalid_grant","error_description":"Bad Request"}',
+        )
+        http_err = httpx.HTTPStatusError("400", request=request, response=response)
+
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(side_effect=http_err)
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            caplog.at_level("ERROR", logger="src.app.routers.auth"),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc", "state": state},
+                )
+
+        assert resp.status_code == 302
+        assert "error=oauth_exchange_failed" in resp.headers["location"]
+        records = [r for r in caplog.records if r.name == "src.app.routers.auth"]
+        assert len(records) == 1
+        msg = records[0].getMessage()
+        assert "OAuth exchange HTTP error" in msg
+        assert "google" in msg
+        assert "400" in msg
+        assert "invalid_grant" in msg
+
+    @pytest.mark.asyncio
+    async def test_user_info_exception_logs_provider(
+        self,
+        client_factory: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        state = "log-state-3"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "github", "code_verifier": "verifier"}),
+        }
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "ghtoken"})
+        oauth_mock.get_user_info = AsyncMock(side_effect=RuntimeError("userinfo down"))
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            caplog.at_level("ERROR", logger="src.app.routers.auth"),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/github/callback",
+                    params={"code": "abc", "state": state},
+                )
+
+        assert resp.status_code == 302
+        records = [r for r in caplog.records if r.name == "src.app.routers.auth"]
+        assert len(records) == 1
+        msg = records[0].getMessage()
+        assert "OAuth user_info unexpected error" in msg
+        assert "github" in msg
+        assert "RuntimeError" in msg
+
+    @pytest.mark.asyncio
+    async def test_upsert_value_error_logs_warning(
+        self,
+        client_factory: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        state = "log-state-4"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
+        }
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
+        oauth_mock.get_user_info = AsyncMock(
+            return_value=OAuthUserInfo(
+                provider="google",
+                provider_account_id="g-99",
+                email="e@e.com",
+                display_name=None,
+                avatar_url=None,
+            )
+        )
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            patch(
+                "src.app.routers.auth.find_or_create_oauth_user",
+                new_callable=AsyncMock,
+                side_effect=ValueError("email already linked to a different oauth account"),
+            ),
+            caplog.at_level("WARNING", logger="src.app.routers.auth"),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc", "state": state},
+                )
+
+        assert resp.status_code == 302
+        assert "error=email_mismatch" in resp.headers["location"]
+        records = [r for r in caplog.records if r.name == "src.app.routers.auth"]
+        assert len(records) == 1
+        assert records[0].levelname == "WARNING"
+        msg = records[0].getMessage()
+        assert "OAuth user upsert rejected" in msg
+        assert "google" in msg
+        assert "email already linked" in msg
