@@ -1,5 +1,7 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -73,6 +75,13 @@ class Settings(BaseSettings):
     # OAuth — Redirect base URL
     AUTH_OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
 
+    # OAuth — Provider base URL override (integration testing only)
+    # When set, overrides provider OAuth endpoint hosts for integration testing.
+    # Format: scheme+host (e.g., "http://fake_oauth:8080"). Rewrites authorize-URL,
+    # token-endpoint, and userinfo-endpoint hosts to this base — paths are preserved.
+    # Leave unset in production.
+    OAUTH_PROVIDER_BASE_URL_OVERRIDE: str | None = None
+
     # OAuth — Server-side flow (GET callback)
     # BASE path for the frontend destination after successful OAuth. The handler
     # always appends `/{provider}` to match the frontend route
@@ -89,6 +98,20 @@ class Settings(BaseSettings):
     AUTH_OAUTH_REFRESH_COOKIE_SECURE: bool = True
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @field_validator("OAUTH_PROVIDER_BASE_URL_OVERRIDE")
+    @classmethod
+    def _validate_oauth_provider_base_url_override(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        parsed = urlparse(v)
+        if not parsed.scheme or not parsed.netloc:
+            msg = (
+                "OAUTH_PROVIDER_BASE_URL_OVERRIDE must include scheme and host "
+                f"(e.g., 'http://fake_oauth:8080'), got: {v!r}"
+            )
+            raise ValueError(msg)
+        return v
 
 
 @lru_cache
