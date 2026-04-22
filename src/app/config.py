@@ -1,12 +1,20 @@
 from functools import lru_cache
+from typing import Self
 from urllib.parse import urlparse
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+_ALLOWED_OVERRIDE_SCHEMES = frozenset({"http", "https"})
+_PROD_LIKE_ENVIRONMENTS = frozenset({"production", "staging"})
+_ALLOWED_ENVIRONMENTS = frozenset({"development", "test", "staging", "production"})
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    # Deployment environment — gates security-sensitive settings
+    ENVIRONMENT: str = "development"
 
     # Database
     DATABASE_URL: str = (
@@ -99,6 +107,14 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    @field_validator("ENVIRONMENT")
+    @classmethod
+    def _validate_environment(cls, v: str) -> str:
+        if v not in _ALLOWED_ENVIRONMENTS:
+            msg = f"ENVIRONMENT must be one of {sorted(_ALLOWED_ENVIRONMENTS)}, got: {v!r}"
+            raise ValueError(msg)
+        return v
+
     @field_validator("OAUTH_PROVIDER_BASE_URL_OVERRIDE")
     @classmethod
     def _validate_oauth_provider_base_url_override(cls, v: str | None) -> str | None:
@@ -111,7 +127,32 @@ class Settings(BaseSettings):
                 f"(e.g., 'http://fake_oauth:8080'), got: {v!r}"
             )
             raise ValueError(msg)
+        if parsed.scheme not in _ALLOWED_OVERRIDE_SCHEMES:
+            msg = (
+                "OAUTH_PROVIDER_BASE_URL_OVERRIDE scheme must be one of "
+                f"{sorted(_ALLOWED_OVERRIDE_SCHEMES)}, got: {parsed.scheme!r}"
+            )
+            raise ValueError(msg)
         return v
+
+    @model_validator(mode="after")
+    def _guard_oauth_provider_base_url_override(self) -> Self:
+        override = self.OAUTH_PROVIDER_BASE_URL_OVERRIDE
+        if override is None:
+            return self
+        if self.ENVIRONMENT in _PROD_LIKE_ENVIRONMENTS:
+            msg = (
+                "OAUTH_PROVIDER_BASE_URL_OVERRIDE must not be set in "
+                "production/staging environments"
+            )
+            raise ValueError(msg)
+        if self.ENVIRONMENT != "test" and urlparse(override).scheme != "https":
+            msg = (
+                "OAUTH_PROVIDER_BASE_URL_OVERRIDE must use https:// outside "
+                "ENVIRONMENT=test (no HTTP downgrade)"
+            )
+            raise ValueError(msg)
+        return self
 
 
 @lru_cache

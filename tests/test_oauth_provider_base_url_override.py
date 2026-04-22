@@ -23,8 +23,14 @@ from src.app.services.oauth import (
 
 
 def _make_settings(**overrides: str | None) -> Settings:
-    """Create a Settings instance with OAuth defaults filled in."""
+    """Create a Settings instance with OAuth defaults filled in.
+
+    Defaults to ENVIRONMENT=test so the OAUTH_PROVIDER_BASE_URL_OVERRIDE guard
+    allows http:// overrides during integration tests. Pass ENVIRONMENT=... to
+    override.
+    """
     defaults: dict[str, str | None] = {
+        "ENVIRONMENT": "test",
         "AUTH_GOOGLE_CLIENT_ID": "google-client-id",
         "AUTH_GOOGLE_CLIENT_SECRET": "google-secret",
         "AUTH_GITHUB_CLIENT_ID": "github-client-id",
@@ -122,6 +128,94 @@ class TestSettingsValidator:
         with pytest.raises(ValidationError) as exc:
             _make_settings(OAUTH_PROVIDER_BASE_URL_OVERRIDE="http://")
         assert "scheme and host" in str(exc.value)
+
+
+class TestEnvironmentGuard:
+    """Cross-field guards preventing override misuse in production/staging."""
+
+    def test_production_with_override_raises(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(
+                ENVIRONMENT="production",
+                OAUTH_PROVIDER_BASE_URL_OVERRIDE="https://fake.example.com",
+            )
+        assert "production/staging" in str(exc.value)
+
+    def test_staging_with_override_raises(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(
+                ENVIRONMENT="staging",
+                OAUTH_PROVIDER_BASE_URL_OVERRIDE="https://fake.example.com",
+            )
+        assert "production/staging" in str(exc.value)
+
+    def test_production_without_override_loads(self) -> None:
+        settings = _make_settings(ENVIRONMENT="production")
+        assert settings.ENVIRONMENT == "production"
+        assert settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE is None
+
+    def test_production_with_https_override_still_raises(self) -> None:
+        # Blocker 1 precedence: override is forbidden in prod regardless of scheme.
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(
+                ENVIRONMENT="production",
+                OAUTH_PROVIDER_BASE_URL_OVERRIDE="https://fake.example.com/o/oauth2",
+            )
+        assert "production/staging" in str(exc.value)
+
+    def test_development_with_http_override_raises(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(
+                ENVIRONMENT="development",
+                OAUTH_PROVIDER_BASE_URL_OVERRIDE="http://fake:8080",
+            )
+        assert "https://" in str(exc.value)
+
+    def test_development_with_https_override_loads(self) -> None:
+        settings = _make_settings(
+            ENVIRONMENT="development",
+            OAUTH_PROVIDER_BASE_URL_OVERRIDE="https://fake.example.com",
+        )
+        assert settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE == "https://fake.example.com"
+
+    def test_test_environment_with_http_override_loads(self) -> None:
+        settings = _make_settings(
+            ENVIRONMENT="test",
+            OAUTH_PROVIDER_BASE_URL_OVERRIDE="http://fake:8080",
+        )
+        assert settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE == "http://fake:8080"
+
+    def test_test_environment_with_https_override_loads(self) -> None:
+        settings = _make_settings(
+            ENVIRONMENT="test",
+            OAUTH_PROVIDER_BASE_URL_OVERRIDE="https://fake:8080",
+        )
+        assert settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE == "https://fake:8080"
+
+
+class TestSchemeWhitelist:
+    """Field-level whitelist rejecting non-http(s) schemes that urlparse accepts."""
+
+    def test_file_scheme_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(OAUTH_PROVIDER_BASE_URL_OVERRIDE="file://host/x")
+        assert "scheme" in str(exc.value)
+
+    def test_javascript_scheme_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(OAUTH_PROVIDER_BASE_URL_OVERRIDE="javascript://alert(1)")
+        assert "scheme" in str(exc.value)
+
+    def test_ftp_scheme_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(OAUTH_PROVIDER_BASE_URL_OVERRIDE="ftp://host:21")
+        assert "scheme" in str(exc.value)
+
+    def test_data_uri_rejected(self) -> None:
+        # data: URIs have no netloc → caught by the "scheme and host" guard.
+        with pytest.raises(ValidationError) as exc:
+            _make_settings(OAUTH_PROVIDER_BASE_URL_OVERRIDE="data:text/plain,x")
+        assert "scheme and host" in str(exc.value) or "scheme" in str(exc.value)
 
 
 class TestGoogleOverride:
