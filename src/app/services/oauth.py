@@ -8,6 +8,7 @@ import secrets
 from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -28,6 +29,22 @@ def generate_pkce_pair() -> tuple[str, str]:
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return code_verifier, code_challenge
+
+
+def _maybe_override(url: str, override: str | None) -> str:
+    """Rewrite the scheme+host of `url` to match `override` when set.
+
+    Path, query, and fragment are preserved so the fake provider only needs to
+    mirror the real provider's paths. No-op when `override` is None/empty.
+    """
+    if not override:
+        return url
+    parsed = urlparse(url)
+    override_parsed = urlparse(override)
+    return parsed._replace(
+        scheme=override_parsed.scheme,
+        netloc=override_parsed.netloc,
+    ).geturl()
 
 
 class BaseOAuthProvider(ABC):
@@ -61,6 +78,7 @@ class GoogleOAuthProvider(BaseOAuthProvider):
     def __init__(self, settings: Settings) -> None:
         self.client_id = settings.AUTH_GOOGLE_CLIENT_ID
         self.client_secret = settings.AUTH_GOOGLE_CLIENT_SECRET
+        self.base_url_override = settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE
 
     def get_authorization_url(self, state: str, code_challenge: str, redirect_uri: str) -> str:
         params = {
@@ -73,14 +91,15 @@ class GoogleOAuthProvider(BaseOAuthProvider):
             "code_challenge_method": "S256",
             "access_type": "offline",
         }
-        return f"https://accounts.google.com/o/oauth2/v2/auth?{_urlencode(params)}"
+        url = f"https://accounts.google.com/o/oauth2/v2/auth?{_urlencode(params)}"
+        return _maybe_override(url, self.base_url_override)
 
     async def exchange_code(
         self, code: str, code_verifier: str, redirect_uri: str
     ) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "https://oauth2.googleapis.com/token",
+                _maybe_override("https://oauth2.googleapis.com/token", self.base_url_override),
                 data={
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
@@ -96,7 +115,9 @@ class GoogleOAuthProvider(BaseOAuthProvider):
     async def get_user_info(self, access_token: str) -> OAuthUserInfo:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "https://www.googleapis.com/oauth2/v3/userinfo",
+                _maybe_override(
+                    "https://www.googleapis.com/oauth2/v3/userinfo", self.base_url_override
+                ),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             resp.raise_for_status()
@@ -118,6 +139,7 @@ class GitHubOAuthProvider(BaseOAuthProvider):
     def __init__(self, settings: Settings) -> None:
         self.client_id = settings.AUTH_GITHUB_CLIENT_ID
         self.client_secret = settings.AUTH_GITHUB_CLIENT_SECRET
+        self.base_url_override = settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE
 
     def get_authorization_url(self, state: str, code_challenge: str, redirect_uri: str) -> str:
         params = {
@@ -128,14 +150,17 @@ class GitHubOAuthProvider(BaseOAuthProvider):
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
         }
-        return f"https://github.com/login/oauth/authorize?{_urlencode(params)}"
+        url = f"https://github.com/login/oauth/authorize?{_urlencode(params)}"
+        return _maybe_override(url, self.base_url_override)
 
     async def exchange_code(
         self, code: str, code_verifier: str, redirect_uri: str
     ) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "https://github.com/login/oauth/access_token",
+                _maybe_override(
+                    "https://github.com/login/oauth/access_token", self.base_url_override
+                ),
                 data={
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
@@ -151,7 +176,7 @@ class GitHubOAuthProvider(BaseOAuthProvider):
     async def get_user_info(self, access_token: str) -> OAuthUserInfo:
         async with httpx.AsyncClient() as client:
             user_resp = await client.get(
-                "https://api.github.com/user",
+                _maybe_override("https://api.github.com/user", self.base_url_override),
                 headers={
                     "Authorization": f"Bearer {access_token}",
                     "Accept": "application/vnd.github+json",
@@ -164,7 +189,7 @@ class GitHubOAuthProvider(BaseOAuthProvider):
             email = user_data.get("email")
             if not email:
                 email_resp = await client.get(
-                    "https://api.github.com/user/emails",
+                    _maybe_override("https://api.github.com/user/emails", self.base_url_override),
                     headers={
                         "Authorization": f"Bearer {access_token}",
                         "Accept": "application/vnd.github+json",
@@ -196,6 +221,7 @@ class AppleOAuthProvider(BaseOAuthProvider):
         self.team_id = settings.AUTH_APPLE_TEAM_ID
         self.key_id = settings.AUTH_APPLE_KEY_ID
         self.private_key = settings.AUTH_APPLE_PRIVATE_KEY
+        self.base_url_override = settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE
 
     def _generate_client_secret(self) -> str:
         """Generate a short-lived JWT client secret for Apple."""
@@ -229,7 +255,8 @@ class AppleOAuthProvider(BaseOAuthProvider):
             "code_challenge_method": "S256",
             "response_mode": "form_post",
         }
-        return f"https://appleid.apple.com/auth/authorize?{_urlencode(params)}"
+        url = f"https://appleid.apple.com/auth/authorize?{_urlencode(params)}"
+        return _maybe_override(url, self.base_url_override)
 
     async def exchange_code(
         self, code: str, code_verifier: str, redirect_uri: str
@@ -237,7 +264,7 @@ class AppleOAuthProvider(BaseOAuthProvider):
         client_secret = self._generate_client_secret()
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "https://appleid.apple.com/auth/token",
+                _maybe_override("https://appleid.apple.com/auth/token", self.base_url_override),
                 data={
                     "client_id": self.client_id,
                     "client_secret": client_secret,
@@ -261,7 +288,9 @@ class AppleOAuthProvider(BaseOAuthProvider):
 
         # Fetch Apple's public keys and verify the id_token signature
         async with httpx.AsyncClient() as client:
-            jwks_resp = await client.get("https://appleid.apple.com/auth/keys")
+            jwks_resp = await client.get(
+                _maybe_override("https://appleid.apple.com/auth/keys", self.base_url_override)
+            )
             jwks_resp.raise_for_status()
             apple_jwks = jwks_resp.json()
 
@@ -289,6 +318,7 @@ class FacebookOAuthProvider(BaseOAuthProvider):
     def __init__(self, settings: Settings) -> None:
         self.app_id = settings.AUTH_FACEBOOK_APP_ID
         self.app_secret = settings.AUTH_FACEBOOK_APP_SECRET
+        self.base_url_override = settings.OAUTH_PROVIDER_BASE_URL_OVERRIDE
 
     def get_authorization_url(self, state: str, code_challenge: str, redirect_uri: str) -> str:
         params = {
@@ -300,14 +330,18 @@ class FacebookOAuthProvider(BaseOAuthProvider):
             "code_challenge_method": "S256",
             "response_type": "code",
         }
-        return f"https://www.facebook.com/v19.0/dialog/oauth?{_urlencode(params)}"
+        url = f"https://www.facebook.com/v19.0/dialog/oauth?{_urlencode(params)}"
+        return _maybe_override(url, self.base_url_override)
 
     async def exchange_code(
         self, code: str, code_verifier: str, redirect_uri: str
     ) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "https://graph.facebook.com/v19.0/oauth/access_token",
+                _maybe_override(
+                    "https://graph.facebook.com/v19.0/oauth/access_token",
+                    self.base_url_override,
+                ),
                 params={
                     "client_id": self.app_id,
                     "client_secret": self.app_secret,
@@ -322,7 +356,7 @@ class FacebookOAuthProvider(BaseOAuthProvider):
     async def get_user_info(self, access_token: str) -> OAuthUserInfo:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "https://graph.facebook.com/v19.0/me",
+                _maybe_override("https://graph.facebook.com/v19.0/me", self.base_url_override),
                 params={
                     "fields": "id,name,email,picture.type(large)",
                     "access_token": access_token,
