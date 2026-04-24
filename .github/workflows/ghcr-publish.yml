@@ -4,6 +4,12 @@
 # and manual dispatch.
 # Builds multi-arch (amd64 + arm64) images for the user service
 # and pushes to ghcr.io/noorinalabs/noorinalabs-user-service.
+#
+# Notify-deploy is folded into this workflow as a dependent job so deploy
+# only fires after the image is published successfully. Replica of the
+# isnad-graph#815 Contract v6 pattern landed in noorinalabs-isnad-graph
+# commit b8931847 (2026-04-23). Tag emit shape is intentionally identical —
+# see the `Extract metadata` step comment block for the Contract table.
 
 name: Publish to GHCR
 
@@ -52,13 +58,33 @@ jobs:
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Tag scheme (isnad-graph#815 Contract v6 = option C, 2026-04-23):
+          #   sha-<short>   — immutable, one per push; written here on every event
+          #   latest        — mutable pointer; written here on main + semver tags
+          #   stg-<short>   — immutable per-push, stg namespace; written here ONLY
+          #                   on push to main. Tag history = stg deploy log.
+          #   stg-latest    — moving pointer to most-recent stg-<short>; written
+          #                   here ONLY on push to main. Consumers pull this for
+          #                   a stable target without chasing SHAs.
+          #   prod-<short>  — immutable per-promotion, prod namespace; written by
+          #                   deploy#84 ONLY, NOT this file. Tag history = promotion log.
+          #   prod-latest   — moving pointer; written by deploy#84 ONLY.
+          # deploy#84 writes both prod-* tags in one `docker buildx imagetools
+          # create` invocation — registry-side manifest rewrite, no rebuild.
+          #
+          # Per-spec replica of noorinalabs-isnad-graph commit b8931847 (Linh Pham).
+          # Canonical Contract: https://github.com/noorinalabs/noorinalabs-isnad-graph/issues/815#issuecomment-4301538921
           tags: |
             # Git tag (e.g., v1.2.3 or phase12-wave1)
             type=ref,event=tag
-            # Short SHA (e.g., sha-a1b2c3d)
+            # Short SHA (e.g., sha-a1b2c3d) on every event — IMMUTABLE anchor
             type=sha,prefix=sha-,format=short
-            # Latest on main branch push or semver tags
+            # Latest on main-branch push or semver tags
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+            # stg-<short> per-push in stg namespace — IMMUTABLE, push-to-main only
+            type=sha,prefix=stg-,format=short,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            # stg-latest moving pointer — push-to-main only
+            type=raw,value=stg-latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Build and push
         id: build
@@ -75,11 +101,11 @@ jobs:
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          # Scan by digest — guaranteed to exist immediately after `Build and push`
-          # and not subject to tag-resolution races. Previously used
-          # `:${{ github.ref_name }}` which on a `main` push resolves to `:main`,
-          # but the metadata-action emits only `:latest` and `:sha-XXXX` for
-          # main pushes — so the scan always 404'd with MANIFEST_UNKNOWN.
+          # Scan by digest — guaranteed to exist immediately after push and
+          # immune to tag-resolution races. metadata-action emits :latest,
+          # :sha-*, and (on main) :stg-* + :stg-latest — never :main.
+          # Digest is the one stable handle across all of them. See
+          # user-service#61 retro.
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: table
           exit-code: "1"
@@ -95,3 +121,28 @@ jobs:
           echo "- **Image:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Platforms:** linux/amd64, linux/arm64" >> "$GITHUB_STEP_SUMMARY"
           echo "- **SHA:** ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Digest:** ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # Fire repository_dispatch to noorinalabs-deploy AFTER the image is published.
+  # Gated to main-branch pushes only — tag pushes and manual dispatches do NOT
+  # auto-deploy. The deploy workflow (deploy#84) consumes the SHA from this
+  # payload to deploy the exact same image to stg that was just built.
+  notify-deploy:
+    name: Notify deploy repo
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger deploy repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DEPLOY_REPO_PAT }}
+          repository: noorinalabs/noorinalabs-deploy
+          event-type: deploy-noorinalabs-user-service
+          client-payload: >-
+            {
+              "repo": "noorinalabs-user-service",
+              "sha": "${{ github.sha }}",
+              "ref": "${{ github.ref_name }}",
+              "actor": "${{ github.actor }}"
+            }
