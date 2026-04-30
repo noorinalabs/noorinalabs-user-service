@@ -1,9 +1,10 @@
 # Publish container images to GitHub Container Registry (GHCR).
 #
-# Triggers: tag push matching v* or phase*-wave* patterns, main branch push,
-# and manual dispatch.
-# Builds multi-arch (amd64 + arm64) images for the user service
-# and pushes to ghcr.io/noorinalabs/noorinalabs-user-service.
+# Triggers: tag push (v* or phase*-wave*), main branch push, manual dispatch,
+# and pull_request when the workflow / Dockerfile / src/** change.
+# Push events build multi-arch (amd64 + arm64) and push to GHCR.
+# pull_request events build single-arch (amd64) for Trivy scanning only —
+# no push, so PR-builder images are never published to the registry.
 
 name: Publish to GHCR
 
@@ -13,11 +14,18 @@ on:
     tags:
       - "v*"
       - "phase*-wave*"
+  pull_request:
+    paths:
+      - .github/workflows/ghcr-publish.yml
+      - Dockerfile
+      - "src/**"
   workflow_dispatch:
 
 concurrency:
-  group: publish-${{ github.ref_name }}
-  cancel-in-progress: false
+  # event_name in the group key prevents PR runs from cancelling main pushes;
+  # cancel-in-progress is enabled only for PRs so a force-push supersedes its scan.
+  group: publish-${{ github.event_name }}-${{ github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -41,6 +49,10 @@ jobs:
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Log in to GHCR
+        # Skipped on pull_request — PR runs do not push, so no registry creds
+        # are exposed to PR-context jobs (which run with read-only GITHUB_TOKEN
+        # for forks anyway, but keeping the step gated is defence-in-depth).
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -55,9 +67,11 @@ jobs:
           tags: |
             # Git tag (e.g., v1.2.3 or phase12-wave1)
             type=ref,event=tag
-            # Short SHA (e.g., sha-a1b2c3d)
+            # Short SHA (e.g., sha-a1b2c3d) — also emitted on PR for the
+            # local image ref Trivy scans.
             type=sha,prefix=sha-,format=short
-            # Latest on main branch push or semver tags
+            # Latest only on main branch push or semver tags. The enable
+            # expression already excludes pull_request (refs/pull/N/merge).
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push
@@ -65,22 +79,45 @@ jobs:
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
+          # PRs build single-arch (amd64) and load into the local Docker daemon
+          # so Trivy can scan by tag without pushing. Push events build the
+          # full multi-arch matrix and push to the registry.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Resolve Trivy image reference
+        id: scan_ref
+        env:
+          # Bind GHA expressions to env vars so the shell sees stable
+          # variables rather than text-substituted values — closes the
+          # script-injection sink Idris flagged on PR #87 review (Q2).
+          # Same env-var idiom used in the `Summary` step below.
+          EVENT_NAME: ${{ github.event_name }}
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_FQN: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # PR: image is loaded locally (push: false). Reference the first
+            # tag the metadata-action emitted (the sha-<short> tag, which is
+            # always present per the tags: config above).
+            FIRST_TAG=$(printf '%s' "$META_TAGS" | head -n1)
+            echo "ref=$FIRST_TAG" >> "$GITHUB_OUTPUT"
+          else
+            # Push/tag: scan by registry digest — race-free post-push (W8 #111).
+            echo "ref=${IMAGE_FQN}@${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          # Scan by digest — guaranteed to exist immediately after `Build and push`
-          # and not subject to tag-resolution races. Previously used
-          # `:${{ github.ref_name }}` which on a `main` push resolves to `:main`,
-          # but the metadata-action emits only `:latest` and `:sha-XXXX` for
-          # main pushes — so the scan always 404'd with MANIFEST_UNKNOWN.
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          # Both paths block on CRITICAL/HIGH so PR Trivy failures gate the merge.
+          image-ref: ${{ steps.scan_ref.outputs.ref }}
           format: table
           exit-code: "1"
           severity: CRITICAL,HIGH
@@ -88,10 +125,25 @@ jobs:
 
       - name: Summary
         if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          IMAGE_FQN: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          GIT_SHA: ${{ github.sha }}
         run: |
-          echo "## GHCR Publish: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Tag:** ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Image:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Platforms:** linux/amd64, linux/arm64" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **SHA:** ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            MODE="scan-only (PR — no push)"
+            PLATFORMS="linux/amd64"
+          else
+            MODE="build + push"
+            PLATFORMS="linux/amd64, linux/arm64"
+          fi
+          {
+            echo "## GHCR Publish: ${{ job.status }}"
+            echo ""
+            echo "- **Mode:** $MODE"
+            echo "- **Ref:** $REF_NAME"
+            echo "- **Image:** $IMAGE_FQN"
+            echo "- **Platforms:** $PLATFORMS"
+            echo "- **SHA:** $GIT_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
