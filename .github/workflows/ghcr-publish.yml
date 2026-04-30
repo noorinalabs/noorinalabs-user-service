@@ -92,16 +92,25 @@ jobs:
 
       - name: Resolve Trivy image reference
         id: scan_ref
+        env:
+          # Bind GHA expressions to env vars so the shell sees stable
+          # variables rather than text-substituted values — closes the
+          # script-injection sink Idris flagged on PR #87 review (Q2).
+          # Same env-var idiom used in the `Summary` step below.
+          EVENT_NAME: ${{ github.event_name }}
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_FQN: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
             # PR: image is loaded locally (push: false). Reference the first
             # tag the metadata-action emitted (the sha-<short> tag, which is
             # always present per the tags: config above).
-            FIRST_TAG=$(printf '%s' '${{ steps.meta.outputs.tags }}' | head -n1)
-            echo "ref=${FIRST_TAG}" >> "$GITHUB_OUTPUT"
+            FIRST_TAG=$(printf '%s' "$META_TAGS" | head -n1)
+            echo "ref=$FIRST_TAG" >> "$GITHUB_OUTPUT"
           else
             # Push/tag: scan by registry digest — race-free post-push (W8 #111).
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+            echo "ref=${IMAGE_FQN}@${BUILD_DIGEST}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run Trivy vulnerability scan
