@@ -123,4 +123,4 @@ Copy `.env.example` to `.env`. Key variables:
 - **GitHub Issues** — story/task/bug tracking (created by Manager, assigned to team members)
 - **GitHub Actions** — CI/CD pipelines, automated tests, linting, deployment
 - These three (Projects, Issues, Actions) are the **core orchestration layer** — do not introduce alternative tools for these concerns
-- **Branching strategy:** Feature branches named `{FirstInitial}.{LastName}\{IIII}-{issue-name}` (e.g., `M.Salazar\0003-claude-md-charter-roster`) merged to `main` via PR
+- **Branching strategy:** Feature branches named `{FirstInitial}.{LastName}/{IIII}-{issue-name}` (e.g., `M.Salazar/0003-claude-md-charter-roster`) merged to `main` via PR
