@@ -42,9 +42,7 @@ async def test_production_returns_404(path: str) -> None:
 async def test_non_production_returns_200(environment: str, path: str) -> None:
     async for client in _client_for(environment):
         response = await client.get(path)
-        assert response.status_code == 200, (
-            f"{path} should be 200 in ENVIRONMENT={environment}"
-        )
+        assert response.status_code == 200, f"{path} should be 200 in ENVIRONMENT={environment}"
 
 
 async def test_default_environment_serves_docs() -> None:
