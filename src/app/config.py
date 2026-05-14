@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     AUTH_PASSWORD_MIN_LENGTH: int = 8
     AUTH_MAX_LOGIN_ATTEMPTS: int = 5
     AUTH_LOCKOUT_DURATION_MINUTES: int = 15
+    # Per-IP rate limiting on auth endpoints (token issue/refresh/validate, OAuth
+    # callback). Backed by Redis; uses AUTH_MAX_LOGIN_ATTEMPTS as the per-window
+    # limit and AUTH_LOCKOUT_DURATION_MINUTES as the window length. Disable only
+    # for local dev / tests where the speed-bump gets in the way.
+    AUTH_RATE_LIMIT_ENABLED: bool = True
 
     # OAuth — Google
     AUTH_GOOGLE_CLIENT_ID: str = ""
