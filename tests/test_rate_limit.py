@@ -38,18 +38,31 @@ def _test_settings(**overrides: Any) -> Settings:
 
 
 class _FakeRedis:
-    """In-memory async Redis stand-in implementing incr/expire for the limiter."""
+    """In-memory async Redis stand-in implementing incr/expire for the limiter.
 
-    def __init__(self) -> None:
+    Tracks per-key TTL state so tests can assert a key is NOT left orphaned
+    without an expiry. `fail_expire_until` lets a test simulate a transient
+    Redis blip where EXPIRE raises for the first N calls then recovers.
+    """
+
+    def __init__(self, fail_expire_until: int = 0) -> None:
         self._counts: dict[str, int] = {}
+        # key -> TTL seconds; absence means "no TTL set" (orphaned key).
+        self.ttls: dict[str, int] = {}
         self.expire_calls: list[tuple[str, int]] = []
+        self._fail_expire_until = fail_expire_until
+        self._expire_attempts = 0
 
     async def incr(self, key: str) -> int:
         self._counts[key] = self._counts.get(key, 0) + 1
         return self._counts[key]
 
     async def expire(self, key: str, seconds: int) -> bool:
+        self._expire_attempts += 1
+        if self._expire_attempts <= self._fail_expire_until:
+            raise RedisError("transient blip during EXPIRE")
         self.expire_calls.append((key, seconds))
+        self.ttls[key] = seconds
         return True
 
 
@@ -90,18 +103,42 @@ class TestCheckRateLimitService:
         assert exc_info.value.status_code == status.HTTP_429_TOO_MANY_REQUESTS
         assert "Retry-After" in (exc_info.value.headers or {})
 
-    async def test_expire_set_only_on_first_hit(self) -> None:
+    async def test_expire_reasserted_on_every_call(self) -> None:
         redis = _FakeRedis()
         settings = _test_settings()
+        window = settings.AUTH_LOCKOUT_DURATION_MINUTES * 60
 
         await check_rate_limit(redis, settings, bucket="token", identifier="1.2.3.4")
         await check_rate_limit(redis, settings, bucket="token", identifier="1.2.3.4")
+        await check_rate_limit(redis, settings, bucket="token", identifier="1.2.3.4")
 
-        # EXPIRE is set exactly once (on the first INCR that returns 1), with the
-        # window length in seconds.
-        assert redis.expire_calls == [
-            ("auth_rl:token:1.2.3.4", settings.AUTH_LOCKOUT_DURATION_MINUTES * 60)
-        ]
+        # EXPIRE is re-asserted on EVERY call (not just the first), each time with
+        # the full window length. This is what makes the limiter self-healing:
+        # an orphaned key (EXPIRE missed earlier) gets its TTL back next call.
+        assert redis.expire_calls == [("auth_rl:token:1.2.3.4", window)] * 3
+
+    async def test_no_orphaned_key_when_expire_fails_then_recovers(self) -> None:
+        """A transient EXPIRE failure must not permanently lock out an identifier.
+
+        Regression test for the INCR/EXPIRE split: if EXPIRE raises on the first
+        hit, the key was previously left with no TTL — once Redis recovered it
+        INCR'd forever and the identifier was permanently 429'd. With EXPIRE
+        re-asserted every call, the next successful call restores the TTL.
+        """
+        # EXPIRE fails on the first call (transient blip), succeeds afterwards.
+        redis = _FakeRedis(fail_expire_until=1)
+        settings = _test_settings(AUTH_MAX_LOGIN_ATTEMPTS=5)
+        key = "auth_rl:token:1.2.3.4"
+        window = settings.AUTH_LOCKOUT_DURATION_MINUTES * 60
+
+        # First call: INCR succeeds, EXPIRE raises -> fails open (no exception),
+        # key is currently orphaned (count=1, no TTL).
+        await check_rate_limit(redis, settings, bucket="token", identifier="1.2.3.4")
+        assert key not in redis.ttls  # orphaned at this point
+
+        # Next call: EXPIRE recovers and is re-asserted -> key now has a TTL.
+        await check_rate_limit(redis, settings, bucket="token", identifier="1.2.3.4")
+        assert redis.ttls.get(key) == window  # self-healed, no permanent lockout
 
     async def test_buckets_are_independent(self) -> None:
         redis = _FakeRedis()

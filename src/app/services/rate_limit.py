@@ -6,11 +6,20 @@ service implements a fixed-window counter keyed by client identifier (IP, and
 optionally a secondary discriminator such as user_id).
 
 Design notes:
-  * Fixed-window counter: INCR a per-window key, EXPIRE it to the window length
-    on first hit. Cheap, atomic enough for this purpose (a burst straddling a
-    window boundary can briefly allow up to 2x the limit — acceptable for a
-    brute-force speed-bump; a sliding window would need a sorted set and is not
-    worth the complexity here).
+  * Fixed-window counter: INCR a per-window key, then EXPIRE it to the window
+    length on EVERY call. Cheap, atomic enough for this purpose (a burst
+    straddling a window boundary can briefly allow up to 2x the limit —
+    acceptable for a brute-force speed-bump; a sliding window would need a
+    sorted set and is not worth the complexity here).
+  * EXPIRE is re-asserted unconditionally, not just on the first hit. INCR and
+    EXPIRE are two separate round-trips: if EXPIRE failed on the first hit (a
+    transient Redis blip mid-call), a "set TTL only when counter == 1" approach
+    would leave the key orphaned with NO expiry — once Redis recovers it INCRs
+    forever and that identifier is permanently 429'd with no window reset.
+    Re-asserting EXPIRE every call makes the limiter self-healing: any orphaned
+    key gets its TTL back on the very next request. Resetting the TTL on each
+    call is fine — the window is "time since the most recent attempt", which is
+    the desired lockout semantics anyway.
   * Fail-open: if Redis is unavailable or errors, the limiter allows the request
     rather than hard-failing the whole auth surface. A rate limiter outage must
     not become an auth outage. Failures are logged so the degradation is visible.
@@ -87,9 +96,12 @@ async def check_rate_limit(
 
     try:
         current = await redis.incr(key)
-        if current == 1:
-            # First hit in this window — set the expiry so the counter resets.
-            await redis.expire(key, window_seconds)
+        # Re-assert the TTL on every call, not just when current == 1. INCR and
+        # EXPIRE are separate round-trips; if EXPIRE failed on the first hit the
+        # key would otherwise be orphaned without a TTL and INCR forever, giving
+        # that identifier a permanent 429. Unconditional re-assert is
+        # self-healing — an orphaned key gets its expiry back on the next call.
+        await redis.expire(key, window_seconds)
     except RedisError:
         # Fail open: a limiter-backend outage must not take down auth. Log so the
         # degraded state is observable.
