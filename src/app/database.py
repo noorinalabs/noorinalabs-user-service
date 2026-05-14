@@ -60,3 +60,13 @@ async def get_redis() -> AsyncGenerator[Redis, None]:
     """FastAPI dependency that yields the Redis client."""
     assert _redis_client is not None, "Redis not initialized"
     yield _redis_client
+
+
+async def get_redis_optional() -> AsyncGenerator[Redis | None, None]:
+    """FastAPI dependency that yields the Redis client, or None if uninitialized.
+
+    Unlike `get_redis`, this never raises. It exists for non-critical, fail-open
+    consumers (e.g. the auth rate limiter) that must degrade gracefully rather
+    than 500 the request when Redis is unavailable.
+    """
+    yield _redis_client
