@@ -40,9 +40,7 @@ def create_access_token(
         "type": "access",
     }
     private_key = get_private_key(settings)
-    token: str = jwt.encode(  # type: ignore[no-untyped-call]
-        payload, private_key, algorithm=settings.JWT_ALGORITHM
-    )
+    token: str = jwt.encode(payload, private_key, algorithm=settings.JWT_ALGORITHM)
     return token, expires_at
 
 
@@ -54,7 +52,7 @@ def create_refresh_token() -> str:
 def decode_access_token(settings: Settings, token: str) -> dict[str, Any]:
     """Decode and validate an access token. Raises JWTError on failure."""
     public_key = get_public_key(settings)
-    payload: dict[str, Any] = jwt.decode(  # type: ignore[no-untyped-call]
+    payload: dict[str, Any] = jwt.decode(
         token,
         public_key,
         algorithms=[settings.JWT_ALGORITHM],
