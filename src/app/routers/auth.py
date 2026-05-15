@@ -7,8 +7,11 @@ OAuth flow (server-side, post #66):
   3. Provider redirects the browser to GET /auth/oauth/{provider}/callback?code=..&state=..
   4. Backend validates state, exchanges code, upserts user, mints tokens, sets the
      refresh_token as an httpOnly cookie, and redirects the browser to
-     AUTH_OAUTH_POST_LOGIN_URL with ?token=<access>&is_new_user=0|1 on success,
-     or ?error=<code> on failure.
+     AUTH_OAUTH_POST_LOGIN_URL. On success the access token is delivered in the
+     URL *fragment* (`#token=<access>`) so it never leaks via the Referer header
+     (#68), while the non-secret flags stay as query params
+     (`?is_new_user=0|1&needs_verification=0`). On failure the redirect carries
+     `?error=<code>`.
 """
 
 from __future__ import annotations
@@ -262,7 +265,12 @@ async def validate_token(
 # --- OAuth Endpoints ---
 
 
-def _build_post_login_url(settings: Settings, provider: str, params: dict[str, str]) -> str:
+def _build_post_login_url(
+    settings: Settings,
+    provider: str,
+    params: dict[str, str],
+    fragment_params: dict[str, str] | None = None,
+) -> str:
     """Build the post-login redirect URL.
 
     `AUTH_OAUTH_POST_LOGIN_URL` is the BASE path (e.g. `/auth/callback`); the
@@ -276,14 +284,23 @@ def _build_post_login_url(settings: Settings, provider: str, params: dict[str, s
     `provider` comes from the FastAPI path parameter, which is validated
     against `VALID_PROVIDERS` in every caller — never user-supplied arbitrary
     text at this point.
+
+    `params` are emitted as the query string; `fragment_params` (if any) are
+    emitted as the URL fragment. Per #68, the access token is delivered in the
+    fragment so it never leaks via the `Referer` header — fragments are not
+    sent in `Referer` by any browser. Non-secret flags (`is_new_user`,
+    `needs_verification`, `error`) stay as query params so SSR / server logs
+    can still observe them.
     """
     base = (settings.AUTH_OAUTH_POST_LOGIN_URL or "/").rstrip("/")
     # URL-encode the provider even though we only ever pass validated values —
     # belt-and-braces in case VALID_PROVIDERS ever includes a special character.
     path = f"{base}/{urllib.parse.quote(provider, safe='')}"
-    if not params:
-        return path
-    return f"{path}?{urllib.parse.urlencode(params)}"
+    if params:
+        path = f"{path}?{urllib.parse.urlencode(params)}"
+    if fragment_params:
+        path = f"{path}#{urllib.parse.urlencode(fragment_params)}"
+    return path
 
 
 def _build_error_redirect(settings: Settings, provider: str, error_code: str) -> RedirectResponse:
@@ -480,9 +497,11 @@ async def oauth_callback_get(
     subscription_status = await get_subscription_status(db, result.user.id)
 
     # Mint tokens directly (no intermediate one-time code — the browser round-trip
-    # via redirect is already the single-use handoff). The access token goes on the
-    # redirect URL (the frontend AuthCallbackPage stores it in localStorage); the
-    # refresh token goes in an httpOnly cookie so JS cannot read it.
+    # via redirect is already the single-use handoff). The access token goes in the
+    # redirect URL *fragment* (the frontend AuthCallbackPage reads it from
+    # window.location.hash and stores it in localStorage) so it never leaks via the
+    # Referer header — see #68. The refresh token goes in an httpOnly cookie so JS
+    # cannot read it.
     access_token, _ = create_access_token(
         settings=settings,
         user_id=result.user.id,
@@ -500,20 +519,21 @@ async def oauth_callback_get(
         user_agent=request.headers.get("user-agent"),
     )
 
-    # Build the success redirect with the access token and new-user flag. The
-    # `/{provider}` segment is appended by _build_post_login_url to match the
-    # frontend route `auth/callback/:provider` (required param — see
+    # Build the success redirect: the access token goes in the URL fragment (#68
+    # — keeps it out of the Referer header), the non-secret flags stay as query
+    # params. The `/{provider}` segment is appended by _build_post_login_url to
+    # match the frontend route `auth/callback/:provider` (required param — see
     # isnad-graph/frontend/src/App.tsx:57 and isnad-graph#824).
     redirect_url = _build_post_login_url(
         settings,
         provider,
         {
-            "token": access_token,
             "is_new_user": "1" if result.is_new_user else "0",
             # OAuth users are created with email_verified=True, so verification is
             # never needed via this flow — but we emit the flag for frontend parity.
             "needs_verification": "0",
         },
+        fragment_params={"token": access_token},
     )
     response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
