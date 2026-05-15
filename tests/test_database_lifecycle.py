@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from src.app import database
@@ -29,3 +31,37 @@ async def test_close_db_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None
     assert disposed, "close_db() must dispose the engine"
     assert database._engine is None
     assert database._async_session_factory is None
+
+
+@pytest.mark.asyncio
+async def test_close_db_noop_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """close_db() must not raise if the engine was never initialized."""
+    monkeypatch.setattr(database, "_engine", None)
+    monkeypatch.setattr(database, "_async_session_factory", None)
+
+    await database.close_db()
+
+    assert database._engine is None
+    assert database._async_session_factory is None
+
+
+@pytest.mark.asyncio
+async def test_close_redis_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """close_redis() must call aclose() on the client and clear the module global."""
+    fake_client = AsyncMock()
+    monkeypatch.setattr(database, "_redis_client", fake_client)
+
+    await database.close_redis()
+
+    fake_client.aclose.assert_awaited_once()
+    assert database._redis_client is None
+
+
+@pytest.mark.asyncio
+async def test_close_redis_noop_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """close_redis() must not raise if Redis was never initialized."""
+    monkeypatch.setattr(database, "_redis_client", None)
+
+    await database.close_redis()
+
+    assert database._redis_client is None
