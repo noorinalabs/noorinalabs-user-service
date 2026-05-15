@@ -10,6 +10,15 @@ _PROD_LIKE_ENVIRONMENTS = frozenset({"production", "staging"})
 _ALLOWED_ENVIRONMENTS = frozenset({"development", "test", "staging", "production"})
 
 
+def _host_of(url: str) -> str | None:
+    """Return the lowercased hostname of an absolute URL, or None if it has no host.
+
+    Used to build the AUTH_OAUTH_POST_LOGIN_URL allowlist from other URL settings.
+    """
+    parsed = urlparse(url)
+    return parsed.hostname.lower() if parsed.hostname else None
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -157,6 +166,86 @@ class Settings(BaseSettings):
                 "ENVIRONMENT=test (no HTTP downgrade)"
             )
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_oauth_post_login_url(self) -> Self:
+        """Open-redirect hardening for AUTH_OAUTH_POST_LOGIN_URL (#69).
+
+        The OAuth callback redirects the browser — with a freshly minted access
+        token attached — to this URL. It is operator-controlled (an env var, no
+        `?next=` override) so it is not an exploitable open redirect today, but a
+        misconfigured or compromised deploy config should not be able to divert
+        token-bearing traffic to an attacker host. Validation runs at boot so a
+        bad value fails fast rather than at request time.
+
+        Accepted:
+          - a same-origin relative URL starting with a single `/`, OR
+          - an absolute URL whose host is in the allowlist derived from
+            AUTH_OAUTH_REDIRECT_BASE_URL + CORS_ORIGINS.
+
+        Rejected everywhere: `javascript:` / `data:` schemes, and
+        protocol-relative `//host` URLs (urlparse reads `//host` as netloc with
+        an empty scheme — a classic open-redirect bypass). Rejected outside
+        ENVIRONMENT=development/test: absolute URLs with a non-`https` scheme.
+        """
+        value = self.AUTH_OAUTH_POST_LOGIN_URL
+        if not value:
+            msg = "AUTH_OAUTH_POST_LOGIN_URL must not be empty"
+            raise ValueError(msg)
+
+        parsed = urlparse(value)
+
+        # Protocol-relative (`//evil.com/path`): no scheme but a netloc. urlparse
+        # treats this as having a host — reject before the relative-path branch.
+        if not parsed.scheme and parsed.netloc:
+            msg = (
+                "AUTH_OAUTH_POST_LOGIN_URL must not be protocol-relative "
+                f"(`//host`), got: {value!r}"
+            )
+            raise ValueError(msg)
+
+        # Same-origin relative URL: starts with a single `/` (not `//`), no scheme,
+        # no netloc. This is the safe common case.
+        if not parsed.scheme and not parsed.netloc:
+            if not value.startswith("/"):
+                msg = (
+                    "AUTH_OAUTH_POST_LOGIN_URL must be an absolute https URL or a "
+                    f"same-origin path starting with '/', got: {value!r}"
+                )
+                raise ValueError(msg)
+            return self
+
+        # Absolute URL from here on. Reject dangerous schemes outright.
+        if parsed.scheme not in {"http", "https"}:
+            msg = (
+                "AUTH_OAUTH_POST_LOGIN_URL scheme must be https (or http in "
+                f"development/test), got: {parsed.scheme!r}"
+            )
+            raise ValueError(msg)
+
+        # Non-https absolute URL only tolerated in development/test.
+        if parsed.scheme != "https" and self.ENVIRONMENT not in {"development", "test"}:
+            msg = (
+                "AUTH_OAUTH_POST_LOGIN_URL must use https:// outside "
+                f"ENVIRONMENT=development/test, got: {value!r}"
+            )
+            raise ValueError(msg)
+
+        # Host must be in the allowlist derived from the other trusted URL settings.
+        allowed_hosts = {_host_of(self.AUTH_OAUTH_REDIRECT_BASE_URL)}
+        allowed_hosts.update(_host_of(origin) for origin in self.CORS_ORIGINS)
+        allowed_hosts.discard(None)
+
+        host = parsed.hostname.lower() if parsed.hostname else None
+        if host not in allowed_hosts:
+            msg = (
+                f"AUTH_OAUTH_POST_LOGIN_URL host {host!r} is not in the allowlist "
+                f"derived from AUTH_OAUTH_REDIRECT_BASE_URL + CORS_ORIGINS "
+                f"({sorted(h for h in allowed_hosts if h)}), got: {value!r}"
+            )
+            raise ValueError(msg)
+
         return self
 
 
