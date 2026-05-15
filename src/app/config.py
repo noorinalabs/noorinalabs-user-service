@@ -214,6 +214,19 @@ class Settings(BaseSettings):
                     f"same-origin path starting with '/', got: {value!r}"
                 )
                 raise ValueError(msg)
+            # A leading `/` followed by `/` or `\` is not same-origin: browsers
+            # normalize `\` -> `/` in http(s) URLs per the WHATWG URL spec, so
+            # `/\host` becomes the protocol-relative `//host` at navigation time
+            # — a classic open-redirect bypass that slips past urlparse (which
+            # does not treat `\` as a netloc delimiter). Reject any backslash:
+            # there is no legitimate use for one in this path, and a blanket
+            # reject closes the whole variant family (`/\`, `/foo\@host`, ...).
+            if value.startswith(("//", "/\\")) or "\\" in value:
+                msg = (
+                    "AUTH_OAUTH_POST_LOGIN_URL must not contain backslashes or be "
+                    f"protocol-relative, got: {value!r}"
+                )
+                raise ValueError(msg)
             return self
 
         # Absolute URL from here on. Reject dangerous schemes outright.

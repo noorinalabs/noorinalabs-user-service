@@ -98,3 +98,15 @@ class TestPostLoginUrlRejected:
     def test_relative_url_without_leading_slash_rejected(self) -> None:
         with pytest.raises(ValidationError, match="starting with '/'"):
             _make_settings(AUTH_OAUTH_POST_LOGIN_URL="auth/callback")
+
+    def test_backslash_relative_url_rejected(self) -> None:
+        # `/\evil.com` passes urlparse as a relative path (backslash is not a
+        # netloc delimiter), but browsers normalize `\`->`/`, turning it into the
+        # protocol-relative `//evil.com` at navigation time — CWE-601 bypass.
+        with pytest.raises(ValidationError, match="must not contain backslashes"):
+            _make_settings(AUTH_OAUTH_POST_LOGIN_URL="/\\evil.com")
+
+    def test_backslash_anywhere_in_relative_url_rejected(self) -> None:
+        # Blanket backslash reject — not just the leading `/\` case.
+        with pytest.raises(ValidationError, match="must not contain backslashes"):
+            _make_settings(AUTH_OAUTH_POST_LOGIN_URL="/auth\\callback")
