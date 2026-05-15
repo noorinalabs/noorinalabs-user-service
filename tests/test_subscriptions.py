@@ -1,172 +1,35 @@
-"""Tests for Subscription API endpoints and service logic."""
+"""Tests for Subscription API endpoints and service logic.
+
+Shared fixtures (RSA keygen, token helpers, db_engine/db_session/seed_roles/
+admin_user/regular_user/client) live in tests/conftest.py — see US#56. This
+module overrides the `settings` fixture so the `client` picks up the webhook
+signing secret the subscription webhook endpoint needs.
+"""
 
 import hashlib
 import hmac as hmac_mod
 import json
 import uuid
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from httpx import ASGITransport, AsyncClient
-from jose import jwt
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import Settings
-from src.app.database import get_db_session
-from src.app.main import create_app
-from src.app.models.role import Role, UserRole
 from src.app.models.subscription import Subscription, SubscriptionPlan, SubscriptionStatus
-from src.app.models.user import Base, User
+from src.app.models.user import User
 from src.app.services import subscription as sub_svc
+from tests.conftest import auth_header as _auth_header
+from tests.conftest import build_test_settings
 
 WEBHOOK_SECRET = "test-webhook-secret-123"
 
-_test_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-TEST_PRIVATE_PEM = _test_private_key.private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
-    encryption_algorithm=serialization.NoEncryption(),
-).decode()
-TEST_PUBLIC_PEM = (
-    _test_private_key.public_key()
-    .public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    .decode()
-)
-
-
-def _make_token(
-    user_id: uuid.UUID,
-    roles: list[str] | None = None,
-    expires_delta: timedelta | None = None,
-) -> str:
-    exp = datetime.now(UTC) + (expires_delta or timedelta(hours=1))
-    payload = {"sub": str(user_id), "exp": exp}
-    if roles:
-        payload["roles"] = roles  # type: ignore[assignment]
-    return jwt.encode(payload, TEST_PRIVATE_PEM, algorithm="RS256")
-
 
 @pytest.fixture
-async def db_engine():  # type: ignore[no-untyped-def]
-    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):  # type: ignore[no-untyped-def]
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:  # type: ignore[no-untyped-def, type-arg]
-    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
-    async with session_factory() as session:
-        yield session
-
-
-@pytest.fixture
-async def seed_roles(db_session: AsyncSession) -> dict[str, Role]:
-    roles = {}
-    for name, desc in [
-        ("admin", "Full platform administration access"),
-        ("researcher", "Access to research tools and datasets"),
-        ("reader", "Read-only access to public content"),
-        ("trial", "Time-limited trial access"),
-    ]:
-        role = Role(name=name, description=desc)
-        db_session.add(role)
-        roles[name] = role
-    await db_session.commit()
-    return roles
-
-
-@pytest.fixture
-async def admin_user(db_session: AsyncSession, seed_roles: dict[str, Role]) -> User:
-    user = User(
-        email="admin@test.com",
-        display_name="Admin User",
-        email_verified=True,
-        is_active=True,
-    )
-    db_session.add(user)
-    await db_session.flush()
-
-    user_role = UserRole(
-        user_id=user.id,
-        role_id=seed_roles["admin"].id,
-        granted_by=user.id,
-    )
-    db_session.add(user_role)
-    await db_session.commit()
-    return user
-
-
-@pytest.fixture
-async def regular_user(db_session: AsyncSession, seed_roles: dict[str, Role]) -> User:
-    user = User(
-        email="reader@test.com",
-        display_name="Regular User",
-        email_verified=True,
-        is_active=True,
-    )
-    db_session.add(user)
-    await db_session.flush()
-
-    user_role = UserRole(
-        user_id=user.id,
-        role_id=seed_roles["reader"].id,
-    )
-    db_session.add(user_role)
-    await db_session.commit()
-    return user
-
-
-@pytest.fixture
-async def client(
-    db_engine,  # type: ignore[no-untyped-def]
-    db_session: AsyncSession,
-) -> AsyncGenerator[AsyncClient, None]:
-    app = create_app()
-
-    def _override_settings() -> Settings:
-        return Settings(
-            JWT_PUBLIC_KEY=TEST_PUBLIC_PEM,
-            DATABASE_URL="sqlite+aiosqlite://",
-            WEBHOOK_SIGNING_SECRET=WEBHOOK_SECRET,
-        )
-
-    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
-
-    async def _override_db() -> AsyncGenerator[AsyncSession, None]:
-        async with session_factory() as session:
-            yield session
-
-    from src.app.config import get_settings
-
-    app.dependency_overrides[get_settings] = _override_settings
-    app.dependency_overrides[get_db_session] = _override_db
-
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-
-def _auth_header(user: User) -> dict[str, str]:
-    token = _make_token(user.id)
-    return {"Authorization": f"Bearer {token}"}
+def settings() -> Settings:
+    """Override the conftest `settings` fixture to wire the webhook secret."""
+    return build_test_settings(WEBHOOK_SIGNING_SECRET=WEBHOOK_SECRET)
 
 
 def _webhook_signature(body: bytes) -> str:
@@ -240,6 +103,63 @@ class TestSubscriptionService:
         await db_session.commit()
         status = await sub_svc.get_subscription_status(db_session, regular_user.id)
         assert status == "expired"
+
+    @pytest.mark.asyncio
+    async def test_expire_lapsed_marks_active_past_due_as_expired(
+        self, db_session: AsyncSession, regular_user: User
+    ) -> None:
+        """expire_lapsed_subscriptions mutates an active-but-past-due sub to expired.
+
+        Unlike get_subscription_status (a pure read), this writes the status
+        back — the row itself must change, not just the computed string.
+        """
+        sub = Subscription(
+            user_id=regular_user.id,
+            plan=SubscriptionPlan.trial,
+            status=SubscriptionStatus.active,
+            starts_at=datetime.now(UTC) - timedelta(days=15),
+            expires_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        db_session.add(sub)
+        await db_session.commit()
+
+        await sub_svc.expire_lapsed_subscriptions(db_session, regular_user.id)
+        await db_session.commit()
+
+        refreshed = await sub_svc.get_current_subscription(db_session, regular_user.id)
+        assert refreshed is not None
+        assert refreshed.status == SubscriptionStatus.expired
+
+    @pytest.mark.asyncio
+    async def test_expire_lapsed_leaves_active_in_date_untouched(
+        self, db_session: AsyncSession, regular_user: User
+    ) -> None:
+        """An active subscription not yet past expires_at must stay active."""
+        sub = Subscription(
+            user_id=regular_user.id,
+            plan=SubscriptionPlan.researcher,
+            status=SubscriptionStatus.active,
+            starts_at=datetime.now(UTC) - timedelta(days=1),
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+        db_session.add(sub)
+        await db_session.commit()
+
+        await sub_svc.expire_lapsed_subscriptions(db_session, regular_user.id)
+        await db_session.commit()
+
+        refreshed = await sub_svc.get_current_subscription(db_session, regular_user.id)
+        assert refreshed is not None
+        assert refreshed.status == SubscriptionStatus.active
+
+    @pytest.mark.asyncio
+    async def test_expire_lapsed_noop_when_no_subscription(
+        self, db_session: AsyncSession, regular_user: User
+    ) -> None:
+        """expire_lapsed_subscriptions must not raise for a user with no subscription."""
+        await sub_svc.expire_lapsed_subscriptions(db_session, regular_user.id)
+        await db_session.commit()
+        assert await sub_svc.get_current_subscription(db_session, regular_user.id) is None
 
 
 # --- API endpoint tests ---

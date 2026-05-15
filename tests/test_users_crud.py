@@ -1,168 +1,17 @@
-"""Tests for User CRUD API and role management endpoints."""
+"""Tests for User CRUD API and role management endpoints.
+
+Shared fixtures (RSA keygen, token helpers, db_engine/db_session/seed_roles/
+admin_user/regular_user/client) live in tests/conftest.py — see US#56.
+"""
 
 import uuid
-from collections.abc import AsyncGenerator
-from datetime import UTC, datetime, timedelta
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from httpx import ASGITransport, AsyncClient
-from jose import jwt
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from httpx import AsyncClient
 
-from src.app.config import Settings
-from src.app.database import get_db_session
-from src.app.main import create_app
-from src.app.models.role import Role, UserRole
-from src.app.models.user import Base, User
-
-# Generate a test RSA key pair (once per module)
-_test_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-TEST_PRIVATE_PEM = _test_private_key.private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
-    encryption_algorithm=serialization.NoEncryption(),
-).decode()
-TEST_PUBLIC_PEM = (
-    _test_private_key.public_key()
-    .public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    .decode()
-)
-
-
-def _make_token(
-    user_id: uuid.UUID,
-    roles: list[str] | None = None,
-    expires_delta: timedelta | None = None,
-) -> str:
-    exp = datetime.now(UTC) + (expires_delta or timedelta(hours=1))
-    payload = {"sub": str(user_id), "exp": exp}
-    if roles:
-        payload["roles"] = roles  # type: ignore[assignment]
-    return jwt.encode(payload, TEST_PRIVATE_PEM, algorithm="RS256")
-
-
-@pytest.fixture
-async def db_engine():  # type: ignore[no-untyped-def]
-    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-
-    # SQLite doesn't enforce foreign keys by default
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):  # type: ignore[no-untyped-def]
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:  # type: ignore[no-untyped-def, type-arg]
-    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
-    async with session_factory() as session:
-        yield session
-
-
-@pytest.fixture
-async def seed_roles(db_session: AsyncSession) -> dict[str, Role]:
-    roles = {}
-    for name, desc in [
-        ("admin", "Full platform administration access"),
-        ("researcher", "Access to research tools and datasets"),
-        ("reader", "Read-only access to public content"),
-        ("trial", "Time-limited trial access"),
-    ]:
-        role = Role(name=name, description=desc)
-        db_session.add(role)
-        roles[name] = role
-    await db_session.commit()
-    return roles
-
-
-@pytest.fixture
-async def admin_user(db_session: AsyncSession, seed_roles: dict[str, Role]) -> User:
-    user = User(
-        email="admin@test.com",
-        display_name="Admin User",
-        email_verified=True,
-        is_active=True,
-    )
-    db_session.add(user)
-    await db_session.flush()
-
-    user_role = UserRole(
-        user_id=user.id,
-        role_id=seed_roles["admin"].id,
-        granted_by=user.id,
-    )
-    db_session.add(user_role)
-    await db_session.commit()
-    return user
-
-
-@pytest.fixture
-async def regular_user(db_session: AsyncSession, seed_roles: dict[str, Role]) -> User:
-    user = User(
-        email="reader@test.com",
-        display_name="Regular User",
-        email_verified=True,
-        is_active=True,
-    )
-    db_session.add(user)
-    await db_session.flush()
-
-    user_role = UserRole(
-        user_id=user.id,
-        role_id=seed_roles["reader"].id,
-    )
-    db_session.add(user_role)
-    await db_session.commit()
-    return user
-
-
-@pytest.fixture
-async def client(
-    db_engine,  # type: ignore[no-untyped-def]
-    db_session: AsyncSession,
-) -> AsyncGenerator[AsyncClient, None]:
-    app = create_app()
-
-    # Override settings — RS256 only, no HS256 fallback
-    def _override_settings() -> Settings:
-        return Settings(
-            JWT_PUBLIC_KEY=TEST_PUBLIC_PEM,
-            DATABASE_URL="sqlite+aiosqlite://",
-        )
-
-    # Override db session to use our test session
-    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
-
-    async def _override_db() -> AsyncGenerator[AsyncSession, None]:
-        async with session_factory() as session:
-            yield session
-
-    from src.app.config import get_settings
-
-    app.dependency_overrides[get_settings] = _override_settings
-    app.dependency_overrides[get_db_session] = _override_db
-
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-
-def _auth_header(user: User) -> dict[str, str]:
-    token = _make_token(user.id)
-    return {"Authorization": f"Bearer {token}"}
+from src.app.models.role import Role
+from src.app.models.user import User
+from tests.conftest import auth_header as _auth_header
 
 
 class TestGetMe:

@@ -1,27 +1,23 @@
 """Tests for email verification flow — US #8.
 
-Uses SQLite-backed integration tests matching codebase convention.
+Uses SQLite-backed integration tests matching codebase convention. Shared
+fixtures (RSA keygen, token helpers, db_engine/db_session/client) live in
+tests/conftest.py — see US#56. This module overrides the `settings` fixture
+to add the SMTP + verification config the verification service needs, and
+declares its own `test_user`/`verified_user` (it does not use roles).
 """
 
 from __future__ import annotations
 
-import uuid
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from httpx import ASGITransport, AsyncClient
-from jose import jwt
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import Settings
-from src.app.database import get_db_session
-from src.app.main import create_app
-from src.app.models.user import Base, User
+from src.app.models.user import User
 from src.app.models.verification_token import TokenType
 from src.app.services.verification import (
     check_rate_limit,
@@ -31,29 +27,15 @@ from src.app.services.verification import (
     invalidate_existing_tokens,
 )
 from src.app.utils.crypto import hash_token
-
-# Generate a test RSA key pair (once per module)
-_test_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-TEST_PRIVATE_PEM = _test_private_key.private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
-    encryption_algorithm=serialization.NoEncryption(),
-).decode()
-TEST_PUBLIC_PEM = (
-    _test_private_key.public_key()
-    .public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    .decode()
-)
+from tests.conftest import TEST_PRIVATE_PEM, build_test_settings
+from tests.conftest import auth_header as _auth_header
 
 
-def _test_settings() -> Settings:
-    return Settings(
-        DATABASE_URL="sqlite+aiosqlite://",
+@pytest.fixture
+def settings() -> Settings:
+    """Override the conftest `settings` fixture with SMTP + verification config."""
+    return build_test_settings(
         JWT_PRIVATE_KEY=TEST_PRIVATE_PEM,
-        JWT_PUBLIC_KEY=TEST_PUBLIC_PEM,
         SMTP_HOST="localhost",
         SMTP_PORT=587,
         SMTP_FROM_EMAIL="test@noorinalabs.com",
@@ -62,46 +44,6 @@ def _test_settings() -> Settings:
         VERIFICATION_RATE_LIMIT_WINDOW_MINUTES=60,
         VERIFICATION_TOKEN_EXPIRE_HOURS=24,
     )
-
-
-def _make_token(user_id: uuid.UUID) -> str:
-    exp = datetime.now(UTC) + timedelta(hours=1)
-    payload = {"sub": str(user_id), "exp": exp, "type": "access"}
-    return jwt.encode(payload, TEST_PRIVATE_PEM, algorithm="RS256")
-
-
-def _auth_header(user: User) -> dict[str, str]:
-    token = _make_token(user.id)
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-def settings() -> Settings:
-    return _test_settings()
-
-
-@pytest.fixture
-async def db_engine():  # type: ignore[no-untyped-def]
-    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):  # type: ignore[no-untyped-def]
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    yield engine
-    await engine.dispose()
-
-
-@pytest.fixture
-async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:  # type: ignore[no-untyped-def, type-arg]
-    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
-    async with session_factory() as session:
-        yield session
 
 
 @pytest.fixture
@@ -128,30 +70,6 @@ async def verified_user(db_session: AsyncSession) -> User:
     db_session.add(user)
     await db_session.commit()
     return user
-
-
-@pytest.fixture
-async def client(
-    db_engine,  # type: ignore[no-untyped-def]
-    settings: Settings,
-) -> AsyncGenerator[AsyncClient, None]:
-    app = create_app()
-
-    from src.app.config import get_settings
-
-    app.dependency_overrides[get_settings] = lambda: settings
-
-    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
-
-    async def _override_db() -> AsyncGenerator[AsyncSession, None]:
-        async with session_factory() as session:
-            yield session
-
-    app.dependency_overrides[get_db_session] = _override_db
-
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
 
 
 # --- Service-layer integration tests ---
