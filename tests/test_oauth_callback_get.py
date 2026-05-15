@@ -299,6 +299,71 @@ class TestOAuthCallbackGet:
         oauth_mock.get_user_info.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_exchange_code_called_with_configured_redirect_uri(
+        self,
+        client_factory: Any,
+        fake_user: User,
+    ) -> None:
+        """exchange_code must receive the redirect_uri built from AUTH_OAUTH_REDIRECT_BASE_URL.
+
+        Gap 3 on #70. The happy-path test asserts the redirect *response* but
+        never inspects what redirect_uri was handed to the provider. A prod
+        misconfig (AUTH_OAUTH_REDIRECT_BASE_URL unset/wrong) would pass every
+        other test and only fail at integration time with redirect_uri_mismatch.
+        """
+        state = "redirect-uri-state"
+        seed = {
+            f"oauth_state:{state}": json.dumps(
+                {"provider": "google", "code_verifier": "pkce-verifier"}
+            ),
+        }
+
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
+        oauth_mock.get_user_info = AsyncMock(
+            return_value=OAuthUserInfo(
+                provider="google",
+                provider_account_id="g-123",
+                email="mateo@example.com",
+                display_name="Mateo Test",
+                avatar_url=None,
+            )
+        )
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            patch(
+                "src.app.routers.auth.find_or_create_oauth_user",
+                new_callable=AsyncMock,
+                return_value=OAuthUserResult(user=fake_user, is_new_user=False),
+            ),
+            patch(
+                "src.app.routers.auth.get_subscription_status",
+                new_callable=AsyncMock,
+                return_value="free",
+            ),
+            patch(
+                "src.app.routers.auth.store_refresh_token",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc123", "state": state},
+                )
+
+        assert resp.status_code == 302
+        # _test_settings sets AUTH_OAUTH_REDIRECT_BASE_URL to this host; the
+        # handler appends /auth/oauth/{provider}/callback.
+        oauth_mock.exchange_code.assert_awaited_once_with(
+            "abc123",
+            "pkce-verifier",
+            "https://isnad-graph.noorinalabs.com/auth/oauth/google/callback",
+        )
+
+    @pytest.mark.asyncio
     async def test_state_is_consumed_exactly_once(self, client_factory: Any) -> None:
         """Replaying the callback URL with the same state must fail the second time."""
         state = "replay-state"
