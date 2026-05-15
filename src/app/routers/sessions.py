@@ -1,6 +1,5 @@
 """Session management routes — US #7."""
 
-import hashlib
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -19,12 +18,9 @@ from src.app.services.session import (
     revoke_session,
 )
 from src.app.services.token import create_refresh_token
+from src.app.utils.crypto import hash_token
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
-
-
-def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
 
 
 @router.post(
@@ -40,7 +36,7 @@ async def create_user_session(
 ) -> SessionCreateResponse:
     """Create a new session for the authenticated user."""
     token = create_refresh_token()
-    token_hash = _hash_token(token)
+    token_hash = hash_token(token)
     session = await create_session(
         db=db,
         redis=redis,
