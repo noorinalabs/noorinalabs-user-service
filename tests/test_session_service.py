@@ -20,12 +20,7 @@ from src.app.services.session import (
     update_session_activity,
 )
 from src.app.services.token import create_refresh_token
-
-
-def _hash_token(token: str) -> str:
-    import hashlib
-
-    return hashlib.sha256(token.encode()).hexdigest()
+from src.app.utils.crypto import hash_token
 
 
 @pytest.fixture
@@ -150,7 +145,7 @@ class TestCreateSession:
         self, db_session: AsyncSession, test_user: User, fake_redis: FakeRedis
     ) -> None:
         token = create_refresh_token()
-        token_hash = _hash_token(token)
+        token_hash = hash_token(token)
         session = await create_session(
             db=db_session,
             redis=fake_redis,  # type: ignore[arg-type]
@@ -187,7 +182,7 @@ class TestCreateSession:
                 db=db_session,
                 redis=fake_redis,  # type: ignore[arg-type]
                 user_id=test_user.id,
-                token_hash=_hash_token(token),
+                token_hash=hash_token(token),
                 ip_address=f"10.0.0.{i}",
             )
             session_ids.append(s.id)
@@ -198,7 +193,7 @@ class TestCreateSession:
             db=db_session,
             redis=fake_redis,  # type: ignore[arg-type]
             user_id=test_user.id,
-            token_hash=_hash_token(extra_token),
+            token_hash=hash_token(extra_token),
         )
 
         # Check oldest session is revoked
@@ -219,7 +214,7 @@ class TestListSessions:
                 db=db_session,
                 redis=fake_redis,  # type: ignore[arg-type]
                 user_id=test_user.id,
-                token_hash=_hash_token(token),
+                token_hash=hash_token(token),
             )
 
         sessions = await list_user_sessions(
@@ -237,7 +232,7 @@ class TestListSessions:
             db=db_session,
             redis=fake_redis,  # type: ignore[arg-type]
             user_id=test_user.id,
-            token_hash=_hash_token(token1),
+            token_hash=hash_token(token1),
         )
 
         token2 = create_refresh_token()
@@ -245,7 +240,7 @@ class TestListSessions:
             db=db_session,
             redis=fake_redis,  # type: ignore[arg-type]
             user_id=test_user.id,
-            token_hash=_hash_token(token2),
+            token_hash=hash_token(token2),
         )
 
         await revoke_session(
@@ -270,7 +265,7 @@ class TestListSessions:
             db=db_session,
             redis=fake_redis,  # type: ignore[arg-type]
             user_id=test_user.id,
-            token_hash=_hash_token(token),
+            token_hash=hash_token(token),
         )
 
         sessions = await list_user_sessions(
@@ -292,7 +287,7 @@ class TestRevokeSession:
             db=db_session,
             redis=fake_redis,  # type: ignore[arg-type]
             user_id=test_user.id,
-            token_hash=_hash_token(token),
+            token_hash=hash_token(token),
         )
 
         revoked = await revoke_session(
@@ -333,7 +328,7 @@ class TestRevokeSession:
             db=db_session,
             redis=fake_redis,  # type: ignore[arg-type]
             user_id=test_user.id,
-            token_hash=_hash_token(token),
+            token_hash=hash_token(token),
         )
 
         other_user_id = uuid.uuid4()
@@ -356,7 +351,7 @@ class TestRevokeAllSessions:
                 db=db_session,
                 redis=fake_redis,  # type: ignore[arg-type]
                 user_id=test_user.id,
-                token_hash=_hash_token(token),
+                token_hash=hash_token(token),
             )
 
         count = await revoke_all_sessions(
@@ -383,7 +378,7 @@ class TestRevokeAllSessions:
                 db=db_session,
                 redis=fake_redis,  # type: ignore[arg-type]
                 user_id=test_user.id,
-                token_hash=_hash_token(token),
+                token_hash=hash_token(token),
             )
             session_ids.append(s.id)
 

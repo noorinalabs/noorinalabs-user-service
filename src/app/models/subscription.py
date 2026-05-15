@@ -39,7 +39,7 @@ class Subscription(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     plan: Mapped[SubscriptionPlan] = mapped_column(
         Enum(SubscriptionPlan, name="subscription_plan", create_constraint=False),
