@@ -178,9 +178,15 @@ class TestOAuthCallbackGet:
         # must-fix on PR#67.
         assert parsed.path == "/auth/callback/google"
         qs = parse_qs(parsed.query)
-        assert "token" in qs
+        # Per #68 the access token is delivered in the URL *fragment*, not the
+        # query string — fragments are never sent in the Referer header. The
+        # non-secret flags stay as query params.
+        assert "token" not in qs
         assert qs["is_new_user"] == ["0"]
         assert qs["needs_verification"] == ["0"]
+        frag = parse_qs(parsed.fragment)
+        assert "token" in frag
+        assert frag["token"][0]
         # Refresh token must be set as an httpOnly cookie
         set_cookie = resp.headers.get("set-cookie", "")
         assert "refresh_token=" in set_cookie
@@ -350,7 +356,10 @@ class TestOAuthCallbackGet:
                     params={"code": "abc", "state": state},
                 )
                 assert first.status_code == 302
-                assert "token=" in first.headers["location"]
+                # Token is in the fragment, not the query string (#68).
+                first_parsed = urlparse(first.headers["location"])
+                assert "token" in parse_qs(first_parsed.fragment)
+                assert "token" not in parse_qs(first_parsed.query)
 
                 # Same client instance — the FakeRedis is shared; state key was consumed.
                 second = await client.get(
