@@ -22,6 +22,9 @@ env/
 *.swp
 *.swo
 
+# Claude Code — local-only consultation sentinels
+.claude/.consulted/
+
 # mypy
 .mypy_cache/
 
