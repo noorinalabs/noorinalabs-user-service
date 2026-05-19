@@ -18,3 +18,14 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest
+
+  openapi-snapshot-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra dev
+      - name: Regenerate snapshot
+        run: make openapi-snapshot
+      - name: Check for drift
+        run: git diff --exit-code docs/openapi-snapshot.json

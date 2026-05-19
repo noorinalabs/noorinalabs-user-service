@@ -1,4 +1,4 @@
-.PHONY: setup dev setup-hooks infra infra-down test lint format typecheck check migrate migrate-new migrate-down
+.PHONY: setup dev setup-hooks infra infra-down test lint format typecheck check migrate migrate-new migrate-down openapi-snapshot
 
 # Setup
 setup:
@@ -42,3 +42,7 @@ migrate-new:
 
 migrate-down:
 	uv run alembic downgrade -1
+
+# API surface
+openapi-snapshot:
+	uv run python scripts/generate_openapi_snapshot.py
