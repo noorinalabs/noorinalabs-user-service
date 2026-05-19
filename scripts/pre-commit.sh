@@ -50,6 +50,7 @@ if [ "${PRE_COMMIT_SKIP_TESTS:-0}" = "1" ]; then
 else
     echo "--- pytest ---"
     if command -v pytest &>/dev/null; then
+        # shellcheck disable=SC2209 # ENVIRONMENT=test is an inline env-var, not a command substitution
         if ! ENVIRONMENT=test pytest --tb=short -q; then
             echo "FAIL: pytest found test failures"
             FAILED=1
