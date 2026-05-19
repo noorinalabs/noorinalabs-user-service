@@ -150,6 +150,17 @@
         "title": "RoleAssignment",
         "type": "object"
       },
+      "RoleName": {
+        "description": "Canonical role names exposed in the public API.\n\nSource of truth: `role_hierarchy` in `ontology/repos/user-service.yaml`\nand the seed data created by migration 0001. Renames or additions must\ngo through cross-repo coordination (us#103, main#161).",
+        "enum": [
+          "admin",
+          "researcher",
+          "reader",
+          "trial"
+        ],
+        "title": "RoleName",
+        "type": "string"
+      },
       "RoleRead": {
         "properties": {
           "created_at": {
@@ -697,7 +708,7 @@
           },
           "roles": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/RoleName"
             },
             "title": "Roles",
             "type": "array"

@@ -1,7 +1,22 @@
 import uuid
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, EmailStr, Field
+
+
+class RoleName(StrEnum):
+    """Canonical role names exposed in the public API.
+
+    Source of truth: `role_hierarchy` in `ontology/repos/user-service.yaml`
+    and the seed data created by migration 0001. Renames or additions must
+    go through cross-repo coordination (us#103, main#161).
+    """
+
+    admin = "admin"
+    researcher = "researcher"
+    reader = "reader"
+    trial = "trial"
 
 
 class UserBase(BaseModel):
@@ -20,7 +35,7 @@ class UserRead(UserBase):
     locale: str | None
     is_active: bool
     created_at: datetime
-    roles: list[str] = Field(default_factory=list)
+    roles: list[RoleName] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
