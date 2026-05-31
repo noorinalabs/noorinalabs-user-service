@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from src.app.config import Settings, get_settings
 from src.app.database import close_db, close_redis, init_db, init_redis
@@ -48,6 +49,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     add_cors_middleware(application)
     add_security_headers(application)
+
+    # Prometheus instrumentation. Default-config exporter labels each series by
+    # handler (route template) + method + status — all low-cardinality, no
+    # per-user/per-session labels. The /metrics endpoint is excluded from the
+    # OpenAPI schema and is only reachable on the backend Docker network where
+    # Prometheus scrapes it; Caddy does not proxy /metrics publicly (deploy#64).
+    Instrumentator().instrument(application).expose(
+        application, endpoint="/metrics", include_in_schema=False
+    )
 
     application.include_router(health.router)
     application.include_router(auth.router)
