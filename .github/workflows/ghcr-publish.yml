@@ -151,6 +151,11 @@ jobs:
           exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          # Per-CVE allowlist with documented rationale + auto-expiry (us#129).
+          # The file ships empty: OS CVEs are addressed by the Dockerfile digest
+          # pin, not suppression, so the gate stays fully active until a CVE is
+          # explicitly justified there.
+          trivyignores: .trivyignore
 
       - name: Summary
         if: always()

@@ -1,0 +1,39 @@
+# .trivyignore — Trivy CVE allowlist for noorinalabs-user-service
+#
+# Wired into the Trivy scan via `trivyignores: .trivyignore` in
+# .github/workflows/ghcr-publish.yml. The scan still blocks the merge on any
+# CRITICAL/HIGH, fixed CVE that is NOT listed here (exit-code: 1,
+# ignore-unfixed: true), so this file is the ONLY suppression surface — keep it
+# minimal and audited.
+#
+# WHEN TO ADD AN ENTRY
+# Only for a genuinely-unexploitable CVE in our runtime context, AND only when a
+# fresh base-image digest pin (see Dockerfile re-pin cadence) cannot satisfy it
+# because the fix is not yet backported to our Debian base. Prefer re-pinning or
+# the Trixie base switch (us#129) over suppression whenever a fix exists.
+#
+# EVERY ENTRY MUST DOCUMENT (per the block template below):
+#   1. CVE id + the affected package, on its own comment line
+#   2. WHY it is not exploitable in OUR runtime (specific to the package + how we
+#      use it — generic "low severity" is not a rationale)
+#   3. A re-evaluation TRIGGER (e.g. "when Debian Bookworm backports the fix")
+#   4. An auto-EXPIRY date (3-month cadence per ops convention) — on expiry the
+#      gate fires again and forces a re-justification. Trivy does not enforce the
+#      date itself; it is a human/review tripwire. A periodic audit (or the
+#      Dependabot-driven re-pin review) prunes expired entries.
+#
+# TEMPLATE (copy, fill in, uncomment):
+#   # CVE-YYYY-NNNNN (<package> — <one-line CVE description>)
+#   # Not exploitable: <runtime-specific rationale>.
+#   # Re-evaluate: <trigger>.
+#   # Filed YYYY-MM-DD, expires YYYY-MM-DD.
+#   CVE-YYYY-NNNNN
+#
+# ---------------------------------------------------------------------------
+# Active allowlist entries: NONE.
+#
+# The us#127 round-2 OS CVEs (libcap2 / libsystemd0 in python:3.12-slim) are
+# addressed structurally by the fresh digest pin in the Dockerfile rather than
+# suppressed here, so the gate stays fully active. Add an entry ONLY if a future
+# scan surfaces a CVE that a fresh digest pin demonstrably cannot fix and the
+# package is genuinely outside our attack surface — with full rationale above.
