@@ -1,0 +1,20 @@
+# Dependabot — Docker base-image digest monitoring (us#129).
+#
+# Watches the Dockerfile at the repo root and opens auto-PRs when a fresher
+# python:3.12-slim manifest-list digest is available, so re-pinning the base
+# image (see the Dockerfile re-pin cadence comment) is a regular, reviewed event
+# rather than a CI-failure-triggered emergency. Mirrors the deploy repo's
+# package-ecosystem: docker convention (commit prefix + tech-debt/ci-cd labels).
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - tech-debt
+      - ci-cd
+      - "deps:docker"
+    commit-message:
+      prefix: "deps(docker)"

@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from src.app.config import Settings, get_settings
 from src.app.database import close_db, close_redis, init_db, init_redis
@@ -48,6 +49,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     add_cors_middleware(application)
     add_security_headers(application)
+
+    # Prometheus instrumentation. Default-config exporter labels each series by
+    # handler (route template) + method + status — all low-cardinality, no
+    # per-user/per-session labels. The endpoint is excluded from the OpenAPI
+    # schema so it does not leak into the public API surface.
+    #
+    # SECURITY — public exposure is gated in the deploy layer, NOT here. The app
+    # serves /metrics on every interface it listens on; the user-service vhost
+    # users.{base} in noorinalabs-deploy/caddy/Caddyfile ends with a catch-all
+    # `handle { reverse_proxy user-service:8000 }`, so WITHOUT an explicit block
+    # an inbound https://users.{base}/metrics would be publicly reachable. The
+    # required guard is a `handle /metrics { respond 403 }` on the users.{base}
+    # vhost, tracked as a HARD prod-deploy prerequisite in noorinalabs-deploy#386
+    # (Idris Yusuf review catch on PR #137). Prometheus itself scrapes
+    # user-service:8000/metrics over the backend Docker network, which the Caddy
+    # 403 does not affect.
+    Instrumentator().instrument(application).expose(
+        application, endpoint="/metrics", include_in_schema=False
+    )
 
     application.include_router(health.router)
     application.include_router(auth.router)
