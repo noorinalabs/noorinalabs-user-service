@@ -1,15 +1,83 @@
 # Pre-commit hooks for noorinalabs-user-service
-# Install: uvx pre-commit install
-# Docs: https://pre-commit.com/
+# Install:  uvx pre-commit install && uvx pre-commit install --hook-type pre-push
+# Docs:     https://pre-commit.com/
 #
-# ruff-format runs first so format fixes don't trigger re-lint.
+# This MIRRORS .github/workflows/ci.yml (the `check` job) so a local commit/push
+# fails fast instead of surfacing a lint/format/type/test error only after a PR
+# is opened (Phase-3 end-state criterion #6 / noorinalabs-main#327). It replaces
+# the older hand-rolled scripts/pre-commit.sh with the framework standard the
+# org uses, so the pre-commit <-> CI sync-drift gate can verify the mirror.
+#
+# Stage split:
+#   pre-commit (fast, every commit) — ruff-format, ruff-lint over the repo.
+#   pre-push   (heavier, every push) — mypy strict + the pytest suite. These run
+#     the whole src/ + tests surface, so they're push-time not commit-time to
+#     keep the commit loop snappy while still catching everything before the
+#     code leaves the machine.
+#
+# CI parity notes (user-service specifics, NOT the parent's .claude/ layout):
+#   * CI runs `uv run ruff/pytest`; the heavier local hooks use `uv run` too so
+#     the exact pinned tool versions from uv.lock run locally, never a stray
+#     global ruff/mypy. ruff itself runs via the ruff-pre-commit mirror, pinned
+#     to v0.15.11 to match the org sibling convention (isnad-graph / parent).
+#   * actionlint mirrors the `Config — Workflow actionlint` job in docs.yml. The
+#     sync-drift gate globs ALL workflow files, so a CI-enforced `actionlint`
+#     kind not mirrored here would turn the gate red — this hook is what keeps
+#     the (now unscoped) gate green (matches parent #571/#572 direction).
+#   * pytest MUST run with ENVIRONMENT=test (the repo's test env-guard /
+#     conftest require it); the entry sets it inline.
+#   * mypy is run here at pre-push as STRICTER-LOCAL: it is configured in
+#     pyproject (strict) and `make check` runs it, but ci.yml's `check` job does
+#     NOT yet run mypy. The sync-drift gate treats stricter-local as
+#     informational (never a gate failure), so keeping mypy here is safe and
+#     catches type regressions before push. If CI later adds mypy, the mirror is
+#     already in place.
+#
+# The kind-level mirror (ruff-lint, ruff-format, pytest, actionlint present on
+# both sides) is enforced in CI by `.claude/lib/pre_commit_ci_sync.py`, which now
+# scans ALL workflows (ci.yml + docs.yml) — if a future edit drops one side, that
+# gate fails the build.
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.6
+    rev: v0.15.11
     hooks:
       - id: ruff-format
         name: ruff-format
       - id: ruff
         args: [--fix]
         name: ruff-lint
+
+  # actionlint mirrors docs.yml's `Config — Workflow actionlint` job so the
+  # sync-drift gate (which globs all workflows) stays green. The upstream golang
+  # hook builds a pinned actionlint and already scopes to ^.github/workflows/.
+  # shellcheck MUST be on PATH so actionlint's embedded shellcheck integration
+  # runs rather than silently skipping (feedback_actionlint_needs_shellcheck) —
+  # CI gets it from ubuntu-latest's preinstalled shellcheck; locally, install
+  # shellcheck before committing. Pinned v1.7.12 to match what CI's
+  # download-actionlint.bash (tracking the latest release) resolves to.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        name: actionlint
+
+  # Heavier checks run at pre-push (mirror CI's pytest job + the strict mypy from
+  # `make check`). Run as `local`/`system` hooks via `uv run` so the pinned
+  # tools from uv.lock are used and never drift from CI.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy-strict (pre-push)
+        entry: uv run mypy src/
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: pytest
+        name: pytest (pre-push)
+        entry: env ENVIRONMENT=test uv run pytest -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

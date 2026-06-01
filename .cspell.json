@@ -1,0 +1,30 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "//": "Spellcheck for noorinalabs-user-service authored docs (#326). Scoped to the authored prose set (CLAUDE.md, the ADR/schema docs, the team charter). Roster cards + the append-only feedback_log are excluded — they are dense with person names and SHAs that would balloon the dictionary without catching real typos. Domain vocabulary lives in project-words.txt.",
+  "dictionaryDefinitions": [
+    {
+      "name": "project-words",
+      "path": "./.cspell/project-words.txt",
+      "addWords": true
+    }
+  ],
+  "dictionaries": ["project-words", "en_US", "softwareTerms", "bash", "python", "node", "filetypes"],
+  "ignoreRegExpList": [
+    "/[0-9a-f]{7,40}/",
+    "/https?:\\/\\/[^\\s)]+/",
+    "/`[^`]+`/",
+    "/<!--[\\s\\S]*?-->/",
+    "/\\b[A-Z_]{3,}\\b/"
+  ],
+  "files": [
+    "CLAUDE.md",
+    "docs/**/*.md",
+    ".claude/team/charter.md"
+  ],
+  "ignorePaths": [
+    "node_modules/**",
+    ".venv/**",
+    ".claude/worktrees/**"
+  ]
+}
