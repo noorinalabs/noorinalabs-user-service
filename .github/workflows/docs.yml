@@ -1,0 +1,119 @@
+name: CI — Docs & Config
+
+# Phase-3 end-state criterion #5 (noorinalabs-main#326): all committed artifacts
+# pass checks — including documentation and config, not just the Python that
+# ci.yml gates. This workflow closes the NON-python gap for user-service:
+# markdown lint over committed docs, committed-config syntax (YAML/JSON parse),
+# and workflow actionlint. Adapted from the parent-canonical docs.yml; scoped to
+# this repo's actual surface (docs/, CLAUDE.md, .claude/team, alembic migration
+# notes, the root config files).
+#
+# Spellcheck (cspell) + internal link-check (lychee) — present in the parent —
+# are intentionally deferred for this repo's pilot: they add a project-words
+# dictionary + lychee-config maintenance tax that is out of proportion to this
+# repo's small prose corpus, and the markdown/config/actionlint gates already
+# cover the structural-breakage class. Adding them is a tracked follow-up, not a
+# blocker for the rollout.
+
+on:
+  push:
+    branches: [main, "deployments/**"]
+    paths:
+      - "**/*.md"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - ".claude/team/**"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    branches: [main, "deployments/**"]
+    paths:
+      - "**/*.md"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - ".claude/team/**"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: markdownlint-cli2
+        # Config (.markdownlint-cli2.jsonc) carries the glob + ignores and
+        # disables the stylistic rules the docs corpus intentionally uses,
+        # keeping the structural rules that catch real breakage.
+        uses: DavidAnson/markdownlint-cli2-action@ded1f9488f68a970bc66ea5619e13e9b52e601cd # v23.2.0
+
+  config-lint:
+    name: Config — YAML/JSON syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate committed YAML + JSON parse
+        # A committed config file that does not parse is a real defect — this is
+        # the syntax floor for the non-python config artifacts ci.yml ignores.
+        # `.jsonc` (the markdownlint config) carries comments and is NOT strict
+        # JSON, so it is excluded from the json.loads pass. Generated/vendored
+        # trees (.venv, node_modules) are skipped.
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          import pathlib
+
+          try:
+              import yaml  # PyYAML is preinstalled on ubuntu-latest runners
+          except ImportError:
+              import subprocess
+
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml"])
+              import yaml
+
+          skip_prefixes = (
+              ".venv/",
+              "node_modules/",
+              ".git/",
+          )
+          root = pathlib.Path(".")
+          failures = []
+          for path in root.rglob("*"):
+              rel = path.as_posix()
+              if path.is_dir() or rel.startswith(skip_prefixes):
+                  continue
+              if path.suffix in (".yaml", ".yml"):
+                  try:
+                      list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+                  except Exception as exc:  # noqa: BLE001
+                      failures.append(f"{rel}: YAML parse error: {exc}")
+              elif path.suffix == ".json":
+                  try:
+                      json.loads(path.read_text(encoding="utf-8"))
+                  except Exception as exc:  # noqa: BLE001
+                      failures.append(f"{rel}: JSON parse error: {exc}")
+          if failures:
+              print("\n".join(failures))
+              sys.exit(1)
+          print("All committed YAML/JSON parse cleanly.")
+          PY
+
+  actionlint:
+    name: Config — Workflow actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint on workflows
+        # shellcheck is preinstalled on ubuntu-latest, so actionlint's embedded
+        # shellcheck integration runs (per the actionlint-needs-shellcheck
+        # discipline) rather than silently skipping.
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color

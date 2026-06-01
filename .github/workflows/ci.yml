@@ -29,3 +29,19 @@ jobs:
         run: make openapi-snapshot
       - name: Check for drift
         run: git diff --exit-code docs/openapi-snapshot.json
+
+  precommit-ci-sync:
+    name: Pre-commit ⇄ CI sync-drift gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify pre-commit config mirrors CI-enforced checks (#327)
+        # Fails if a check the code-CI workflow enforces (ruff/mypy/pytest/…) is
+        # missing from .pre-commit-config.yaml, so local hooks can't silently
+        # drift behind CI. Scoped to THIS workflow (ci.yml) only — docs.yml gates
+        # a different artifact class (markdown/config/actionlint) that pre-commit
+        # intentionally does not mirror, so it is excluded from the comparison.
+        run: python3 .claude/lib/pre_commit_ci_sync.py . --ci .github/workflows/ci.yml
