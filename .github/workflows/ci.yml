@@ -39,9 +39,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Verify pre-commit config mirrors CI-enforced checks (#327)
-        # Fails if a check the code-CI workflow enforces (ruff/mypy/pytest/…) is
-        # missing from .pre-commit-config.yaml, so local hooks can't silently
-        # drift behind CI. Scoped to THIS workflow (ci.yml) only — docs.yml gates
-        # a different artifact class (markdown/config/actionlint) that pre-commit
-        # intentionally does not mirror, so it is excluded from the comparison.
-        run: python3 .claude/lib/pre_commit_ci_sync.py . --ci .github/workflows/ci.yml
+        # Fails if a check the QUALITY-GATE CI workflows enforce
+        # (ruff/mypy/pytest/actionlint/…) is missing from .pre-commit-config.yaml,
+        # so local hooks can't silently drift behind CI. Scans BOTH PR-gate
+        # workflows — ci.yml (code) AND docs.yml (markdown/config/actionlint) —
+        # per the canonical org direction (parent #571/#572): docs.yml's
+        # actionlint job is mirrored by the actionlint pre-commit hook, so the
+        # gate stays green. ghcr-publish.yml is EXCLUDED: it is a release-time
+        # container build/push (its `docker build` is not a local fast-feedback
+        # check pre-commit should mirror), unlike the parent/landing repos whose
+        # only workflows are quality gates. This is the user-service-specific
+        # deviation from a bare unscoped `.` invocation.
+        run: python3 .claude/lib/pre_commit_ci_sync.py . --ci .github/workflows/ci.yml --ci .github/workflows/docs.yml

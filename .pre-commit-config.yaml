@@ -19,7 +19,11 @@
 #   * CI runs `uv run ruff/pytest`; the heavier local hooks use `uv run` too so
 #     the exact pinned tool versions from uv.lock run locally, never a stray
 #     global ruff/mypy. ruff itself runs via the ruff-pre-commit mirror, pinned
-#     to match `ruff>=0.8.0` in pyproject's dev extra (bump in lockstep).
+#     to v0.15.11 to match the org sibling convention (isnad-graph / parent).
+#   * actionlint mirrors the `Config — Workflow actionlint` job in docs.yml. The
+#     sync-drift gate globs ALL workflow files, so a CI-enforced `actionlint`
+#     kind not mirrored here would turn the gate red — this hook is what keeps
+#     the (now unscoped) gate green (matches parent #571/#572 direction).
 #   * pytest MUST run with ENVIRONMENT=test (the repo's test env-guard /
 #     conftest require it); the entry sets it inline.
 #   * mypy is run here at pre-push as STRICTER-LOCAL: it is configured in
@@ -29,21 +33,34 @@
 #     catches type regressions before push. If CI later adds mypy, the mirror is
 #     already in place.
 #
-# The kind-level mirror (ruff-lint, ruff-format, pytest present on both sides) is
-# enforced in CI by `.claude/lib/pre_commit_ci_sync.py` — if a future edit drops
-# one side, that gate fails the build. The gate is scoped to ci.yml (the code-CI
-# workflow); docs.yml gates a separate artifact class (markdown/config/
-# actionlint) that pre-commit intentionally does not mirror.
+# The kind-level mirror (ruff-lint, ruff-format, pytest, actionlint present on
+# both sides) is enforced in CI by `.claude/lib/pre_commit_ci_sync.py`, which now
+# scans ALL workflows (ci.yml + docs.yml) — if a future edit drops one side, that
+# gate fails the build.
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.6
+    rev: v0.15.11
     hooks:
       - id: ruff-format
         name: ruff-format
       - id: ruff
         args: [--fix]
         name: ruff-lint
+
+  # actionlint mirrors docs.yml's `Config — Workflow actionlint` job so the
+  # sync-drift gate (which globs all workflows) stays green. The upstream golang
+  # hook builds a pinned actionlint and already scopes to ^.github/workflows/.
+  # shellcheck MUST be on PATH so actionlint's embedded shellcheck integration
+  # runs rather than silently skipping (feedback_actionlint_needs_shellcheck) —
+  # CI gets it from ubuntu-latest's preinstalled shellcheck; locally, install
+  # shellcheck before committing. Pinned v1.7.12 to match what CI's
+  # download-actionlint.bash (tracking the latest release) resolves to.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        name: actionlint
 
   # Heavier checks run at pre-push (mirror CI's pytest job + the strict mypy from
   # `make check`). Run as `local`/`system` hooks via `uv run` so the pinned
