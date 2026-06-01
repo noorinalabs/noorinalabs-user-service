@@ -138,21 +138,25 @@ class DriftDirection(unittest.TestCase):
 
 
 class ThisRepoHasNoDrift(unittest.TestCase):
-    """The user-service config must mirror its ci.yml kinds — this is the gate
-    running against the very repo that ships it. Scoped to ci.yml only; docs.yml
-    gates a different artifact class (markdown/config/actionlint) that
-    pre-commit intentionally does not mirror."""
+    """The user-service config must mirror its QUALITY-GATE CI kinds — this is the
+    gate running against the very repo that ships it. Scoped to the two PR-gate
+    workflows (ci.yml code + docs.yml markdown/config/actionlint); the actionlint
+    pre-commit hook covers docs.yml's actionlint kind. ghcr-publish.yml is
+    excluded — its `docker build` is a release-time publish, not a local
+    fast-feedback check pre-commit should mirror."""
 
-    def test_precommit_mirrors_ci(self) -> None:
+    def test_precommit_mirrors_quality_gate_ci(self) -> None:
         precommit = _REPO_ROOT / ".pre-commit-config.yaml"
         ci = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
+        docs = _REPO_ROOT / ".github" / "workflows" / "docs.yml"
         self.assertTrue(precommit.is_file(), "repo must have a pre-commit config")
         self.assertTrue(ci.is_file(), "repo must have ci.yml")
-        harmful, _ = check_repo(precommit, [ci])
+        self.assertTrue(docs.is_file(), "repo must have docs.yml")
+        harmful, _ = check_repo(precommit, [ci, docs])
         self.assertEqual(
             harmful,
             set(),
-            f"pre-commit must mirror ci.yml; missing locally: {sorted(harmful)}",
+            f"pre-commit must mirror the quality-gate CI; missing locally: {sorted(harmful)}",
         )
 
 

@@ -1,0 +1,22 @@
+# Project words for noorinalabs-user-service docs spellcheck (#326).
+# Domain vocabulary, product/library names, and team-member names that appear in
+# authored prose (CLAUDE.md, docs/, the team charter) and are not spelling
+# defects. Add new domain terms here rather than suppressing the cspell job.
+
+# Org / product
+Noorin
+noorinalabs
+isnad
+
+# Tooling / libraries
+joserfc
+worktree
+Worktrees
+
+# Team-member names (appear in the charter / roster references)
+Anya
+Boukhari
+Idris
+Kowalczyk
+Mateo
+Yusuf
