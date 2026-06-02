@@ -119,11 +119,11 @@ erDiagram
         timestamptz created_at
     }
 
-    users ||--o{ user_roles : "has roles"
+    users ||--o{ user_roles : "holds role (user_id)"
+    users ||--o{ user_roles : "granted role (granted_by)"
     roles ||--o{ user_roles : "assigned to"
     users ||--o{ sessions : "has sessions"
     users ||--o{ subscriptions : "has subscription"
     users ||--o{ verification_tokens : "has tokens"
     users ||--o{ oauth_accounts : "linked accounts"
-    users ||--o{ user_roles : "grants (granted_by)"
 ```

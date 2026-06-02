@@ -1,0 +1,60 @@
+# Python virtual environment — LOAD-BEARING.
+# Without this, `COPY . .` in the runtime stage pulls a host developer's
+# local `.venv/` (from `uv sync`) into the build context and overwrites the
+# builder-stage venv copied via `COPY --from=builder /app/.venv`. The host
+# venv's entry-point scripts (alembic, uvicorn) have shebangs pointing at the
+# developer's absolute host path, so they fail inside the container with
+# `sh: ... not found`. See issue #79.
+.venv/
+venv/
+env/
+
+# Python caches / compiled artefacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Test / coverage artefacts
+.coverage
+coverage.xml
+htmlcov/
+
+# Git / CI / tooling — not needed in the image, only bloats the build context
+.git/
+.gitignore
+.github/
+.pre-commit-config.yaml
+
+# Local dev compose / docker files — not needed inside the image
+docker-compose.dev.yml
+docker-compose.override.yml
+Dockerfile
+.dockerignore
+
+# Local environment files — never bake secrets into an image
+.env
+.env.*
+!.env.example
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+tmp/
+temp/
+.cache/
+
+# Agent / harness workdir — never belongs in a build context
+.claude/
