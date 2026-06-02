@@ -57,6 +57,28 @@ A **repository ruleset** targeting `~DEFAULT_BRANCH`, `enforcement: active`:
   reported at least once on the default branch. **Re-confirm all contexts at
   apply time** against live check-runs — job names can change:
   `gh api repos/<repo>/commits/<default-sha>/check-runs --jq '.check_runs[].name'`.
+
+  > **Two apply-time gotchas (P3W15 org-wide rollout, main#322).**
+  >
+  > 1. **Path-filtered-CI repos: OMIT the rule, do not pass `[]`.** A repo whose
+  >    `ci.yml` carries a `paths:` filter (e.g. `noorinalabs-main`,
+  >    `noorinalabs-deploy`) has no *unconditional* gate context to require — a
+  >    docs/status-only PR would deadlock waiting on a check that never runs.
+  >    Such a ruleset must **drop the entire `required_status_checks` rule
+  >    object** from `rules`. It must **not** include the rule with an empty
+  >    `required_status_checks` array: the GitHub REST `/rulesets` endpoint
+  >    **rejects** that with `HTTP 422 — Invalid parameter
+  >    required_status_checks: Expected at least 1 elements, got 0`. (A
+  >    committed `ruleset-main.json` that ships the empty-array form is
+  >    delivered-but-never-applicable — it 422s on every apply.) The ruleset
+  >    still enforces PR-only + no-force-push; per-PR merge-on-red stays with
+  >    Hook 14 (`validate_pr_ci_status`).
+  > 2. **Matrix jobs expand their context name.** A matrix job surfaces its
+  >    check-run as `<job> (<matrix-value>)` — e.g. design-system's `ci` job
+  >    (`node-version: [20.x]`) reports as `ci (20.x)`. Requiring the bare `ci`
+  >    context would never go green. Always copy the **exact live check-run
+  >    name** from the `check-runs` query above into the context, matrix
+  >    expansion included.
 - **`deletion` + `non_fast_forward`** — no force-push / branch-delete on `main`.
 - **`bypass_actors`: Repository-admin (`actor_id: 5`, `bypass_mode: always`)** —
   keeps the orchestrator's `--admin` wave→main wrapup merges and the charter
