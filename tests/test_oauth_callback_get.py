@@ -178,9 +178,15 @@ class TestOAuthCallbackGet:
         # must-fix on PR#67.
         assert parsed.path == "/auth/callback/google"
         qs = parse_qs(parsed.query)
-        assert "token" in qs
+        # Per #68 the access token is delivered in the URL *fragment*, not the
+        # query string — fragments are never sent in the Referer header. The
+        # non-secret flags stay as query params.
+        assert "token" not in qs
         assert qs["is_new_user"] == ["0"]
         assert qs["needs_verification"] == ["0"]
+        frag = parse_qs(parsed.fragment)
+        assert "token" in frag
+        assert frag["token"][0]
         # Refresh token must be set as an httpOnly cookie
         set_cookie = resp.headers.get("set-cookie", "")
         assert "refresh_token=" in set_cookie
@@ -299,6 +305,71 @@ class TestOAuthCallbackGet:
         oauth_mock.get_user_info.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_exchange_code_called_with_configured_redirect_uri(
+        self,
+        client_factory: Any,
+        fake_user: User,
+    ) -> None:
+        """exchange_code must receive the redirect_uri built from AUTH_OAUTH_REDIRECT_BASE_URL.
+
+        Gap 3 on #70. The happy-path test asserts the redirect *response* but
+        never inspects what redirect_uri was handed to the provider. A prod
+        misconfig (AUTH_OAUTH_REDIRECT_BASE_URL unset/wrong) would pass every
+        other test and only fail at integration time with redirect_uri_mismatch.
+        """
+        state = "redirect-uri-state"
+        seed = {
+            f"oauth_state:{state}": json.dumps(
+                {"provider": "google", "code_verifier": "pkce-verifier"}
+            ),
+        }
+
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
+        oauth_mock.get_user_info = AsyncMock(
+            return_value=OAuthUserInfo(
+                provider="google",
+                provider_account_id="g-123",
+                email="mateo@example.com",
+                display_name="Mateo Test",
+                avatar_url=None,
+            )
+        )
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            patch(
+                "src.app.routers.auth.find_or_create_oauth_user",
+                new_callable=AsyncMock,
+                return_value=OAuthUserResult(user=fake_user, is_new_user=False),
+            ),
+            patch(
+                "src.app.routers.auth.get_subscription_status",
+                new_callable=AsyncMock,
+                return_value="free",
+            ),
+            patch(
+                "src.app.routers.auth.store_refresh_token",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc123", "state": state},
+                )
+
+        assert resp.status_code == 302
+        # _test_settings sets AUTH_OAUTH_REDIRECT_BASE_URL to this host; the
+        # handler appends /auth/oauth/{provider}/callback.
+        oauth_mock.exchange_code.assert_awaited_once_with(
+            "abc123",
+            "pkce-verifier",
+            "https://isnad-graph.noorinalabs.com/auth/oauth/google/callback",
+        )
+
+    @pytest.mark.asyncio
     async def test_state_is_consumed_exactly_once(self, client_factory: Any) -> None:
         """Replaying the callback URL with the same state must fail the second time."""
         state = "replay-state"
@@ -350,7 +421,10 @@ class TestOAuthCallbackGet:
                     params={"code": "abc", "state": state},
                 )
                 assert first.status_code == 302
-                assert "token=" in first.headers["location"]
+                # Token is in the fragment, not the query string (#68).
+                first_parsed = urlparse(first.headers["location"])
+                assert "token" in parse_qs(first_parsed.fragment)
+                assert "token" not in parse_qs(first_parsed.query)
 
                 # Same client instance — the FakeRedis is shared; state key was consumed.
                 second = await client.get(
@@ -359,6 +433,86 @@ class TestOAuthCallbackGet:
                 )
                 assert second.status_code == 302
                 assert "error=invalid_state" in second.headers["location"]
+
+
+class TestOAuthToTokenFlow:
+    """End-to-end: OAuth callback issues a token, then /auth/token/validate
+    accepts it (US#56 missing coverage).
+
+    The individual legs are tested elsewhere — callback→redirect above,
+    validate→200 in test_auth_endpoints.py — but nothing chains them. This
+    pins that the access token the callback mints is one the validate
+    endpoint actually accepts (same signing keypair, well-formed claims).
+    """
+
+    @pytest.mark.asyncio
+    async def test_callback_issued_token_passes_validate(
+        self,
+        client_factory: Any,
+        fake_user: User,
+    ) -> None:
+        state = "e2e-state-token"
+        seed = {
+            f"oauth_state:{state}": json.dumps(
+                {"provider": "google", "code_verifier": "pkce-verifier"}
+            ),
+        }
+
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
+        oauth_mock.get_user_info = AsyncMock(
+            return_value=OAuthUserInfo(
+                provider="google",
+                provider_account_id="g-123",
+                email="mateo@example.com",
+                display_name="Mateo Test",
+                avatar_url=None,
+            )
+        )
+
+        with (
+            patch(
+                "src.app.routers.auth.get_oauth_provider",
+                return_value=oauth_mock,
+            ),
+            patch(
+                "src.app.routers.auth.find_or_create_oauth_user",
+                new_callable=AsyncMock,
+                return_value=OAuthUserResult(user=fake_user, is_new_user=False),
+            ),
+            patch(
+                "src.app.routers.auth.get_subscription_status",
+                new_callable=AsyncMock,
+                return_value="free",
+            ),
+            patch(
+                "src.app.routers.auth.store_refresh_token",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            async with await client_factory(seed) as client:
+                callback_resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc123", "state": state},
+                )
+                assert callback_resp.status_code == 302
+                # Token is delivered in the URL fragment (#68).
+                fragment = parse_qs(urlparse(callback_resp.headers["location"]).fragment)
+                token = fragment["token"][0]
+                assert token
+
+                # Feed the freshly-issued token straight back to validate.
+                validate_resp = await client.get(
+                    "/auth/token/validate",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+
+        assert validate_resp.status_code == 200
+        data = validate_resp.json()
+        assert data["valid"] is True
+        assert data["user_id"] == str(fake_user.id)
+        assert data["email"] == fake_user.email
 
 
 class TestPostCallbackRemoved:

@@ -15,12 +15,12 @@ from src.app.services.keys import (
     get_public_key_jwk,
 )
 from src.app.services.token import (
-    _hash_token,
     create_access_token,
     create_refresh_token,
     decode_access_token,
     get_jwks,
 )
+from src.app.utils.crypto import hash_token
 
 
 def _test_settings() -> Settings:
@@ -179,9 +179,9 @@ class TestRefreshToken:
 
     def test_hash_is_deterministic(self) -> None:
         token = create_refresh_token()
-        assert _hash_token(token) == _hash_token(token)
+        assert hash_token(token) == hash_token(token)
 
     def test_different_tokens_different_hashes(self) -> None:
         t1 = create_refresh_token()
         t2 = create_refresh_token()
-        assert _hash_token(t1) != _hash_token(t2)
+        assert hash_token(t1) != hash_token(t2)

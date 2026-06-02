@@ -24,13 +24,13 @@ from src.app.main import create_app
 from src.app.models.user import Base, User
 from src.app.models.verification_token import TokenType
 from src.app.services.verification import (
-    _hash_token,
     check_rate_limit,
     confirm_verification_token,
     create_verification_token,
     get_latest_verification_token,
     invalidate_existing_tokens,
 )
+from src.app.utils.crypto import hash_token
 
 # Generate a test RSA key pair (once per module)
 _test_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -191,7 +191,7 @@ class TestCreateVerificationToken:
 
         latest = await get_latest_verification_token(db_session, test_user.id)
         assert latest is not None
-        assert latest.token_hash == _hash_token(raw_token)
+        assert latest.token_hash == hash_token(raw_token)
         assert latest.token_type == TokenType.email_verification
         assert latest.used_at is None
 
@@ -270,10 +270,10 @@ class TestInvalidateExistingTokens:
 class TestTokenHashing:
     def test_hash_deterministic(self) -> None:
         token = "test-token-123"
-        assert _hash_token(token) == _hash_token(token)
+        assert hash_token(token) == hash_token(token)
 
     def test_hash_different_tokens(self) -> None:
-        assert _hash_token("token-a") != _hash_token("token-b")
+        assert hash_token("token-a") != hash_token("token-b")
 
 
 # --- Endpoint integration tests ---
