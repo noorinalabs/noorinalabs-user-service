@@ -21,7 +21,7 @@ async def init_db() -> None:
     """Initialize the database engine and session factory."""
     global _engine, _async_session_factory
     settings = get_settings()
-    _engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+    _engine = create_async_engine(settings.effective_database_url, pool_pre_ping=True)
     _async_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
 
@@ -29,7 +29,7 @@ async def init_redis() -> None:
     """Initialize the Redis client."""
     global _redis_client
     settings = get_settings()
-    _redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=False)
+    _redis_client = Redis.from_url(settings.effective_redis_url, decode_responses=False)
 
 
 async def close_db() -> None:
