@@ -1,5 +1,11 @@
 # Team Charter — noorinalabs-user-service
 
+## Repository Context
+
+`noorinalabs-user-service` is a **child repository of the `noorinalabs-main` organization repo**. It is an independent git repository (own branches, PRs, CI) that is normally cloned beneath `noorinalabs-main/`, but it can also be cloned standalone.
+
+Org-wide rules live once in the `noorinalabs-main` charter. The "Shared Rules" links below point to the canonical copies via GitHub URLs so they resolve from a standalone clone, a nested clone, or a worktree checkout alike. When working inside `noorinalabs-main`, the same docs are on disk at `noorinalabs-main/.claude/team/charter/`.
+
 ## Purpose
 
 All work on the noorinalabs-user-service repository is executed through a simulated team of specialized agents. Every problem-solving session MUST instantiate this team structure. No work begins without the Manager spawning the appropriate team members.
@@ -14,18 +20,18 @@ All work on the noorinalabs-user-service repository is executed through a simula
 
 ## Shared Rules (Org Charter)
 
-The following rules are defined once in the org charter and apply to all repos. Agents MUST load the relevant sub-doc when performing that activity.
+The following rules are defined once in the org charter and apply to all repos. Agents MUST load the relevant sub-doc when performing that activity. Links point to the canonical copies in `noorinalabs-main` (see Repository Context above).
 
 | Topic | Reference |
 |-------|-----------|
-| Issue comments, reply protocol, delegation, assignment, hygiene | [Org § Issues](../../../.claude/team/charter/issues.md) |
-| Branching rules, deployment branches, worktree cleanup | [Org § Branching](../../../.claude/team/charter/branching.md) |
-| Commit identity, co-author trailers | [Org § Commits](../../../.claude/team/charter/commits.md) |
-| PR workflow, CI enforcement, consolidated PRs, cross-PR deps | [Org § Pull Requests](../../../.claude/team/charter/pull-requests.md) |
-| Agent naming, lifecycle, hub-and-spoke, team lifecycle | [Org § Agents](../../../.claude/team/charter/agents.md) |
-| Hooks (validate identity, block --no-verify, block git config, auto env test, validate labels) | [Org § Hooks](../../../.claude/team/charter/hooks.md) |
-| Tech preferences, debate, tie-breaking (LCA) | [Org § Tech Decisions](../../../.claude/team/charter/tech-decisions.md) |
-| Cross-repo communication protocol | [Org § Communication](../../../.claude/team/charter/communication.md) |
+| Issue comments, reply protocol, delegation, assignment, hygiene | [Org § Issues](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/issues.md) |
+| Branching rules, deployment branches, worktree cleanup | [Org § Branching](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/branching.md) |
+| Commit identity, co-author trailers | [Org § Commits](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/commits.md) |
+| PR workflow, CI enforcement, consolidated PRs, cross-PR deps | [Org § Pull Requests](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/pull-requests.md) |
+| Agent naming, lifecycle, hub-and-spoke, team lifecycle | [Org § Agents](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/agents.md) |
+| Hooks (validate identity, block --no-verify, block git config, auto env test, validate labels) | [Org § Hooks](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/hooks.md) |
+| Tech preferences, debate, tie-breaking (LCA) | [Org § Tech Decisions](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/tech-decisions.md) |
+| Cross-repo communication protocol | [Org § Communication](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/communication.md) |
 
 ## Org Chart
 
@@ -94,11 +100,11 @@ graph TD
 | Mateo Salazar | `Mateo Salazar` | `parametrization+Mateo.Salazar@gmail.com` |
 | Idris Yusuf | `Idris Yusuf` | `parametrization+Idris.Yusuf@gmail.com` |
 
-See [Org § Commits](../../../.claude/team/charter/commits.md) for the commit format, co-author trailers, and identity rules.
+See [Org § Commits](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/commits.md) for the commit format, co-author trailers, and identity rules.
 
 ## Automated Enforcement (Git Hooks)
 
-Commit identity, `--no-verify` blocking, and `git config` blocking are enforced via Claude Code hooks defined at the org level (`noorinalabs-main/.claude/settings.json`). See [Org § Hooks](../../../.claude/team/charter/hooks.md) for details.
+Commit identity, `--no-verify` blocking, and `git config` blocking are enforced via Claude Code hooks defined at the org level (`noorinalabs-main/.claude/settings.json`). See [Org § Hooks](https://github.com/noorinalabs/noorinalabs-main/blob/main/.claude/team/charter/hooks.md) for details.
 
 ## Steady-State Goal
 
