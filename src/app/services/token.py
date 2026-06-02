@@ -1,6 +1,5 @@
 """Token service — JWT issuance, validation, refresh, and revocation."""
 
-import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -14,10 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.config import Settings
 from src.app.models.session import Session
 from src.app.services.keys import get_private_key, get_public_key, get_public_key_jwk
-
-
-def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
+from src.app.utils.crypto import hash_token
 
 
 def create_access_token(
@@ -71,7 +67,7 @@ async def store_refresh_token(
     user_agent: str | None = None,
 ) -> Session:
     """Store a hashed refresh token in the sessions table."""
-    token_hash = _hash_token(refresh_token)
+    token_hash = hash_token(refresh_token)
     expires_at = datetime.now(UTC) + timedelta(days=expires_days)
     session = Session(
         user_id=user_id,
@@ -87,7 +83,7 @@ async def store_refresh_token(
 
 async def validate_refresh_token(db: AsyncSession, refresh_token: str) -> Session | None:
     """Look up a refresh token and return the session if valid."""
-    token_hash = _hash_token(refresh_token)
+    token_hash = hash_token(refresh_token)
     now = datetime.now(UTC)
     result = await db.execute(
         select(Session).where(
@@ -101,7 +97,7 @@ async def validate_refresh_token(db: AsyncSession, refresh_token: str) -> Sessio
 
 async def revoke_refresh_token(db: AsyncSession, refresh_token: str) -> bool:
     """Revoke a refresh token. Returns True if a token was revoked."""
-    token_hash = _hash_token(refresh_token)
+    token_hash = hash_token(refresh_token)
     cursor_result: CursorResult[Any] = await db.execute(  # type: ignore[assignment]
         update(Session)
         .where(Session.token_hash == token_hash, Session.revoked_at.is_(None))

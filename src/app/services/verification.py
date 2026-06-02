@@ -6,7 +6,6 @@ and email dispatch.
 
 from __future__ import annotations
 
-import hashlib
 import html
 import secrets
 import uuid
@@ -21,10 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.config import Settings
 from src.app.models.user import User
 from src.app.models.verification_token import TokenType, VerificationToken
-
-
-def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
+from src.app.utils.crypto import hash_token
 
 
 async def check_rate_limit(
@@ -77,7 +73,7 @@ async def create_verification_token(
     await invalidate_existing_tokens(db, user_id)
 
     raw_token = secrets.token_urlsafe(32)
-    token_hash = _hash_token(raw_token)
+    token_hash = hash_token(raw_token)
     expires_at = datetime.now(UTC) + timedelta(hours=settings.VERIFICATION_TOKEN_EXPIRE_HOURS)
 
     verification_token = VerificationToken(
@@ -99,7 +95,7 @@ async def confirm_verification_token(
 
     Returns the User if successful, None if the token is invalid/expired/used.
     """
-    token_hash = _hash_token(raw_token)
+    token_hash = hash_token(raw_token)
     now = datetime.now(UTC)
 
     result = await db.execute(

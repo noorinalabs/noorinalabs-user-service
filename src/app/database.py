@@ -3,20 +3,26 @@
 from collections.abc import AsyncGenerator
 
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from src.app.config import get_settings
 
+_engine: AsyncEngine | None = None
 _async_session_factory: async_sessionmaker[AsyncSession] | None = None
 _redis_client: Redis | None = None
 
 
 async def init_db() -> None:
     """Initialize the database engine and session factory."""
-    global _async_session_factory
+    global _engine, _async_session_factory
     settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
-    _async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    _engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+    _async_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
 
 async def init_redis() -> None:
@@ -28,12 +34,10 @@ async def init_redis() -> None:
 
 async def close_db() -> None:
     """Dispose the engine and clear the session factory."""
-    global _async_session_factory
-    if _async_session_factory is not None:
-        # Get engine from the session factory bind
-        engine = _async_session_factory.kw.get("bind")
-        if engine is not None:
-            await engine.dispose()
+    global _engine, _async_session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
     _async_session_factory = None
 
 
@@ -55,4 +59,14 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 async def get_redis() -> AsyncGenerator[Redis, None]:
     """FastAPI dependency that yields the Redis client."""
     assert _redis_client is not None, "Redis not initialized"
+    yield _redis_client
+
+
+async def get_redis_optional() -> AsyncGenerator[Redis | None, None]:
+    """FastAPI dependency that yields the Redis client, or None if uninitialized.
+
+    Unlike `get_redis`, this never raises. It exists for non-critical, fail-open
+    consumers (e.g. the auth rate limiter) that must degrade gracefully rather
+    than 500 the request when Redis is unavailable.
+    """
     yield _redis_client

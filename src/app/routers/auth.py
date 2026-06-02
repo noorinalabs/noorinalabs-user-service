@@ -7,8 +7,11 @@ OAuth flow (server-side, post #66):
   3. Provider redirects the browser to GET /auth/oauth/{provider}/callback?code=..&state=..
   4. Backend validates state, exchanges code, upserts user, mints tokens, sets the
      refresh_token as an httpOnly cookie, and redirects the browser to
-     AUTH_OAUTH_POST_LOGIN_URL with ?token=<access>&is_new_user=0|1 on success,
-     or ?error=<code> on failure.
+     AUTH_OAUTH_POST_LOGIN_URL. On success the access token is delivered in the
+     URL *fragment* (`#token=<access>`) so it never leaks via the Referer header
+     (#68), while the non-secret flags stay as query params
+     (`?is_new_user=0|1&needs_verification=0`). On failure the redirect carries
+     `?error=<code>`.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import Settings, get_settings
-from src.app.database import get_db_session, get_redis
+from src.app.database import get_db_session, get_redis, get_redis_optional
 from src.app.models.user import User
 from src.app.schemas.auth import (
     OAuthLoginResponse,
@@ -41,6 +44,7 @@ from src.app.schemas.auth import (
     TokenValidationResponse,
 )
 from src.app.services.oauth import OAuthProvider, generate_pkce_pair, get_oauth_provider
+from src.app.services.rate_limit import check_rate_limit, enforce_ip_rate_limit
 from src.app.services.subscription import get_subscription_status
 from src.app.services.token import (
     create_access_token,
@@ -59,6 +63,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbDep = Annotated[AsyncSession, Depends(get_db_session)]
 RedisDep = Annotated[Redis, Depends(get_redis)]
+# Fail-open Redis handle for the rate limiter — yields None if Redis is down so
+# a limiter-backend outage degrades to "no limiting" rather than a 500.
+RateLimitRedisDep = Annotated[Redis | None, Depends(get_redis_optional)]
 
 AUTH_CODE_PREFIX = "auth_code:"
 AUTH_CODE_TTL_SECONDS = 60
@@ -74,6 +81,7 @@ OAUTH_ERROR_USER_INFO_FAILED = "oauth_exchange_failed"
 OAUTH_ERROR_EMAIL_MISMATCH = "email_mismatch"
 OAUTH_ERROR_PROVIDER_DENIED = "provider_denied"
 OAUTH_ERROR_UNSUPPORTED_PROVIDER = "unsupported_provider"
+OAUTH_ERROR_RATE_LIMITED = "rate_limited"
 
 VALID_PROVIDERS = {p.value for p in OAuthProvider}
 
@@ -88,12 +96,15 @@ async def issue_token(
     settings: SettingsDep,
     db: DbDep,
     redis: RedisDep,
+    rl_redis: RateLimitRedisDep,
 ) -> TokenResponse:
     """Issue an access + refresh token pair after OAuth success.
 
     Requires a one-time authorization code issued by the OAuth callback endpoint.
     The code is single-use and expires after 60 seconds.
     """
+    await enforce_ip_rate_limit(request, rl_redis, settings, bucket="token")
+
     redis_key = f"{AUTH_CODE_PREFIX}{body.authorization_code}"
     raw = await redis.getdel(redis_key)
     if raw is None:
@@ -138,14 +149,28 @@ async def refresh_token(
     request: Request,
     settings: SettingsDep,
     db: DbDep,
+    rl_redis: RateLimitRedisDep,
 ) -> TokenResponse:
     """Exchange a refresh token for a new access token (with rotation)."""
+    # Rate-limit by IP before touching the token store — blocks a single host
+    # from hammering refresh/rotation regardless of which token it presents.
+    await enforce_ip_rate_limit(request, rl_redis, settings, bucket="refresh")
+
     session = await validate_refresh_token(db, body.refresh_token)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
+
+    # Secondary per-user rate limit: caps refresh churn for one account even if
+    # the attacker rotates source IPs. Keyed by user_id, separate bucket.
+    await check_rate_limit(
+        rl_redis,
+        settings,
+        bucket="refresh_user",
+        identifier=str(session.user_id),
+    )
 
     # Rotate: revoke old, issue new
     await revoke_refresh_token(db, body.refresh_token)
@@ -207,10 +232,14 @@ async def revoke_token(body: RevokeRequest, db: DbDep) -> None:
 
 @router.get("/token/validate", response_model=TokenValidationResponse)
 async def validate_token(
+    request: Request,
     settings: SettingsDep,
+    rl_redis: RateLimitRedisDep,
     authorization: Annotated[str, Header()],
 ) -> TokenValidationResponse:
     """Validate an access token (for cross-service calls)."""
+    await enforce_ip_rate_limit(request, rl_redis, settings, bucket="validate")
+
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
         return TokenValidationResponse(valid=False)
@@ -236,7 +265,12 @@ async def validate_token(
 # --- OAuth Endpoints ---
 
 
-def _build_post_login_url(settings: Settings, provider: str, params: dict[str, str]) -> str:
+def _build_post_login_url(
+    settings: Settings,
+    provider: str,
+    params: dict[str, str],
+    fragment_params: dict[str, str] | None = None,
+) -> str:
     """Build the post-login redirect URL.
 
     `AUTH_OAUTH_POST_LOGIN_URL` is the BASE path (e.g. `/auth/callback`); the
@@ -250,14 +284,23 @@ def _build_post_login_url(settings: Settings, provider: str, params: dict[str, s
     `provider` comes from the FastAPI path parameter, which is validated
     against `VALID_PROVIDERS` in every caller — never user-supplied arbitrary
     text at this point.
+
+    `params` are emitted as the query string; `fragment_params` (if any) are
+    emitted as the URL fragment. Per #68, the access token is delivered in the
+    fragment so it never leaks via the `Referer` header — fragments are not
+    sent in `Referer` by any browser. Non-secret flags (`is_new_user`,
+    `needs_verification`, `error`) stay as query params so SSR / server logs
+    can still observe them.
     """
     base = (settings.AUTH_OAUTH_POST_LOGIN_URL or "/").rstrip("/")
     # URL-encode the provider even though we only ever pass validated values —
     # belt-and-braces in case VALID_PROVIDERS ever includes a special character.
     path = f"{base}/{urllib.parse.quote(provider, safe='')}"
-    if not params:
-        return path
-    return f"{path}?{urllib.parse.urlencode(params)}"
+    if params:
+        path = f"{path}?{urllib.parse.urlencode(params)}"
+    if fragment_params:
+        path = f"{path}#{urllib.parse.urlencode(fragment_params)}"
+    return path
 
 
 def _build_error_redirect(settings: Settings, provider: str, error_code: str) -> RedirectResponse:
@@ -310,6 +353,7 @@ async def oauth_callback_get(
     settings: SettingsDep,
     db: DbDep,
     redis: RedisDep,
+    rl_redis: RateLimitRedisDep,
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
@@ -332,6 +376,16 @@ async def oauth_callback_get(
 
     Issue: noorinalabs/noorinalabs-user-service#66.
     """
+    # Per-IP rate limit. This endpoint is browser-facing, so a raised 429 would
+    # be a dead end — instead bounce to the frontend with a rate_limited error
+    # code (consistent with every other exit path here).
+    try:
+        await enforce_ip_rate_limit(request, rl_redis, settings, bucket="oauth_callback")
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+            return _build_error_redirect(settings, provider, OAUTH_ERROR_RATE_LIMITED)
+        raise
+
     # Provider-denied consent (e.g. "access_denied") → bounce to frontend with error
     if error:
         return _build_error_redirect(settings, provider, OAUTH_ERROR_PROVIDER_DENIED)
@@ -443,9 +497,11 @@ async def oauth_callback_get(
     subscription_status = await get_subscription_status(db, result.user.id)
 
     # Mint tokens directly (no intermediate one-time code — the browser round-trip
-    # via redirect is already the single-use handoff). The access token goes on the
-    # redirect URL (the frontend AuthCallbackPage stores it in localStorage); the
-    # refresh token goes in an httpOnly cookie so JS cannot read it.
+    # via redirect is already the single-use handoff). The access token goes in the
+    # redirect URL *fragment* (the frontend AuthCallbackPage reads it from
+    # window.location.hash and stores it in localStorage) so it never leaks via the
+    # Referer header — see #68. The refresh token goes in an httpOnly cookie so JS
+    # cannot read it.
     access_token, _ = create_access_token(
         settings=settings,
         user_id=result.user.id,
@@ -463,20 +519,21 @@ async def oauth_callback_get(
         user_agent=request.headers.get("user-agent"),
     )
 
-    # Build the success redirect with the access token and new-user flag. The
-    # `/{provider}` segment is appended by _build_post_login_url to match the
-    # frontend route `auth/callback/:provider` (required param — see
+    # Build the success redirect: the access token goes in the URL fragment (#68
+    # — keeps it out of the Referer header), the non-secret flags stay as query
+    # params. The `/{provider}` segment is appended by _build_post_login_url to
+    # match the frontend route `auth/callback/:provider` (required param — see
     # isnad-graph/frontend/src/App.tsx:57 and isnad-graph#824).
     redirect_url = _build_post_login_url(
         settings,
         provider,
         {
-            "token": access_token,
             "is_new_user": "1" if result.is_new_user else "0",
             # OAuth users are created with email_verified=True, so verification is
             # never needed via this flow — but we emit the flag for frontend parity.
             "needs_verification": "0",
         },
+        fragment_params={"token": access_token},
     )
     response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
