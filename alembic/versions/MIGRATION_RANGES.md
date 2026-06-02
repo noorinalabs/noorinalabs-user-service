@@ -10,6 +10,7 @@ each Phase 3 issue has a reserved range:
 | 0020–0029 | US #9  | Subscriptions         |
 | 0030–0039 | US #10 | 2FA / TOTP            |
 | 0040      | US #63 | Merge multi-heads     |
+| 0041      | US #54 | subscriptions.user_id index (tech-debt) |
 
 Name your migration files with the appropriate prefix, e.g.:
 `0010_add_verification_tokens.py` for US #8.
