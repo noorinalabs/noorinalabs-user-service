@@ -20,18 +20,21 @@ from src.app.services import subscription as sub_svc
 router = APIRouter(prefix="/api/v1/subscriptions", tags=["subscriptions"])
 
 
-@router.get("/me", response_model=SubscriptionRead)
+@router.get("/me", response_model=SubscriptionRead | None)
 async def get_my_subscription(
     current_user: CurrentUserDep,
     db: DbDep,
-) -> SubscriptionRead:
-    """Get the current user's subscription."""
+) -> SubscriptionRead | None:
+    """Get the current user's subscription, or null if they have none.
+
+    Returns 200 with a `null` body (not 404) when the user has no subscription:
+    the user resource exists and "no subscription / free tier" is a normal state,
+    not an error. Frontend consumers treat null as "show the pricing CTA" rather
+    than having to special-case an HTTP error (#74).
+    """
     sub = await sub_svc.get_current_subscription(db, current_user.id)
     if sub is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No subscription found",
-        )
+        return None
     return SubscriptionRead.model_validate(sub)
 
 
