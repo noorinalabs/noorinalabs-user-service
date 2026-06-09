@@ -1,9 +1,10 @@
 from functools import lru_cache
 from typing import Self
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
-from pydantic import field_validator, model_validator
+from pydantic import computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings
+from sqlalchemy import URL
 
 _ALLOWED_OVERRIDE_SCHEMES = frozenset({"http", "https"})
 _PROD_LIKE_ENVIRONMENTS = frozenset({"production", "staging"})
@@ -25,13 +26,36 @@ class Settings(BaseSettings):
     # Deployment environment — gates security-sensitive settings
     ENVIRONMENT: str = "development"
 
-    # Database
+    # Database — preferred config path is the separate component vars below
+    # (DATABASE_HOST/PORT/USER/PASSWORD/NAME). When any component is set, the
+    # connection URL is built in-app via sqlalchemy.URL.create, which URL-encodes
+    # the password — so passwords containing `/`, `+`, `=`, `@`, etc. are handled
+    # safely (#65). DATABASE_URL is retained as a backward-compatible fallback and
+    # as the local-dev default; it is used verbatim only when no component is set.
     DATABASE_URL: str = (
         "postgresql+asyncpg://user_service:user_service_dev@localhost:5433/user_service"
     )
+    DATABASE_HOST: str | None = None
+    DATABASE_PORT: int = 5432
+    DATABASE_USER: str | None = None
+    DATABASE_PASSWORD: str | None = None
+    DATABASE_NAME: str | None = None
+    # Driver scheme used when building the URL from components.
+    DATABASE_DRIVER: str = "postgresql+asyncpg"
 
-    # Redis
+    # Redis — preferred config path is the separate component vars below
+    # (REDIS_HOST/PORT/PASSWORD/DB). When REDIS_HOST is set, the connection URL is
+    # built in-app with the password URL-encoded via urllib.parse.quote — so a
+    # base64 password containing `/` no longer terminates the URL authority and
+    # crashes urlparse at startup (#65). REDIS_URL is the backward-compatible
+    # fallback / local-dev default, used verbatim only when REDIS_HOST is unset.
     REDIS_URL: str = "redis://localhost:6380/0"
+    REDIS_HOST: str | None = None
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str | None = None
+    REDIS_DB: int = 0
+    # Set true to use rediss:// (TLS) when building the URL from components.
+    REDIS_TLS: bool = False
 
     # JWT (RS256)
     JWT_PRIVATE_KEY: str = ""
@@ -120,6 +144,46 @@ class Settings(BaseSettings):
     AUTH_OAUTH_REFRESH_COOKIE_SECURE: bool = True
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def effective_database_url(self) -> str:
+        """The Postgres connection URL the app should actually connect with.
+
+        When DATABASE_HOST is set, build the URL from the component vars via
+        ``sqlalchemy.URL.create`` (which URL-encodes the password), so a password
+        with URL-unsafe characters can never corrupt the URL. Otherwise fall back
+        to DATABASE_URL verbatim (backward compat / local-dev default).
+        """
+        if self.DATABASE_HOST is None:
+            return self.DATABASE_URL
+        return URL.create(
+            drivername=self.DATABASE_DRIVER,
+            username=self.DATABASE_USER,
+            password=self.DATABASE_PASSWORD,
+            host=self.DATABASE_HOST,
+            port=self.DATABASE_PORT,
+            database=self.DATABASE_NAME,
+        ).render_as_string(hide_password=False)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def effective_redis_url(self) -> str:
+        """The Redis connection URL the app should actually connect with.
+
+        When REDIS_HOST is set, build ``redis(s)://[:<encoded-password>@]host:port/db``
+        with the password percent-encoded via ``urllib.parse.quote`` (so `/`, `@`,
+        `:`, `#`, etc. survive urlparse). Otherwise fall back to REDIS_URL verbatim
+        (backward compat / local-dev default).
+        """
+        if self.REDIS_HOST is None:
+            return self.REDIS_URL
+        scheme = "rediss" if self.REDIS_TLS else "redis"
+        auth = ""
+        if self.REDIS_PASSWORD:
+            # safe="" so every URL-reserved char in the password is encoded.
+            auth = f":{quote(self.REDIS_PASSWORD, safe='')}@"
+        return f"{scheme}://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     @field_validator("ENVIRONMENT")
     @classmethod

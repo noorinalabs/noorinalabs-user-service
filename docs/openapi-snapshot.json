@@ -1428,7 +1428,7 @@
         ]
       },
       "get": {
-        "description": "Get the current user's subscription.",
+        "description": "Get the current user's subscription, or null if they have none.\n\nReturns 200 with a `null` body (not 404) when the user has no subscription:\nthe user resource exists and \"no subscription / free tier\" is a normal state,\nnot an error. Frontend consumers treat null as \"show the pricing CTA\" rather\nthan having to special-case an HTTP error (#74).",
         "operationId": "get_my_subscription_api_v1_subscriptions_me_get",
         "parameters": [
           {
@@ -1446,7 +1446,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SubscriptionRead"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubscriptionRead"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get My Subscription Api V1 Subscriptions Me Get"
                 }
               }
             },

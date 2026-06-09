@@ -30,6 +30,7 @@ from fastapi.responses import RedirectResponse
 from jose.exceptions import JWTError
 from redis.asyncio import Redis
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import Settings, get_settings
@@ -82,6 +83,10 @@ OAUTH_ERROR_EMAIL_MISMATCH = "email_mismatch"
 OAUTH_ERROR_PROVIDER_DENIED = "provider_denied"
 OAUTH_ERROR_UNSUPPORTED_PROVIDER = "unsupported_provider"
 OAUTH_ERROR_RATE_LIMITED = "rate_limited"
+# DB-layer failure during find-or-create (connection drop, lock timeout,
+# constraint violation, missing schema). Distinct from email_mismatch so the
+# frontend can render "try again later" rather than a user-actionable message.
+OAUTH_ERROR_UPSERT_FAILED = "oauth_upsert_failed"
 
 VALID_PROVIDERS = {p.value for p in OAuthProvider}
 
@@ -474,6 +479,22 @@ async def oauth_callback_get(
             display_name=user_info.display_name,
             avatar_url=user_info.avatar_url,
         )
+    except SQLAlchemyError as exc:
+        # Any DB-layer failure (connection drop, lock timeout, constraint
+        # violation, missing schema — e.g. ProgrammingError "relation does not
+        # exist"). Without this catch these bubble up as a raw 500 instead of a
+        # friendly redirect (#73). Caught BEFORE ValueError: the two are disjoint
+        # exception trees, but SQLAlchemyError is the broad base class so every
+        # DBAPIError/IntegrityError/OperationalError/ProgrammingError subclass is
+        # covered. Log full detail server-side via logger.exception; the redirect
+        # carries only a generic code — DB exception strings can contain table
+        # names, SQL, and connection params and must never reach the browser.
+        logger.exception(
+            "OAuth upsert DB error: provider=%s exc_type=%s",
+            provider,
+            type(exc).__name__,
+        )
+        return _build_error_redirect(settings, provider, OAUTH_ERROR_UPSERT_FAILED)
     except ValueError as exc:
         # Missing email / email-mismatch-style errors bounce the user back with a
         # readable error code the frontend can render.

@@ -247,11 +247,14 @@ class TestSubscriptionService:
 
 class TestGetMySubscription:
     @pytest.mark.asyncio
-    async def test_no_subscription_returns_404(
+    async def test_no_subscription_returns_200_null(
         self, client: AsyncClient, regular_user: User
     ) -> None:
+        # No subscription is a normal state (free tier), not an error: 200 + null
+        # body, not 404 (#74).
         resp = await client.get("/api/v1/subscriptions/me", headers=_auth_header(regular_user))
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert resp.json() is None
 
     @pytest.mark.asyncio
     async def test_returns_subscription(

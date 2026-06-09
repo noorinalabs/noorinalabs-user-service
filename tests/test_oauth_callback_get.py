@@ -692,3 +692,182 @@ class TestExchangeLoggingDiagnostics:
         assert "OAuth user upsert rejected" in msg
         assert "google" in msg
         assert "email already linked" in msg
+
+
+class TestUpsertDbErrorHandling:
+    """Issue #73 — DB-layer failures in find_or_create_oauth_user must bounce the
+    user to the frontend with `?error=oauth_upsert_failed`, not escape as a 500.
+
+    Prior to this issue the upsert path caught only ValueError; any
+    SQLAlchemyError subclass (OperationalError, ProgrammingError,
+    IntegrityError, DBAPIError, …) bubbled up as a raw 500. These tests pin the
+    new contract:
+      - the handler returns 302 with the generic upsert-failed code,
+      - it logs at ERROR with exc_info (logger.exception),
+      - the redirect carries ONLY the generic code — no DB detail leaks, and
+      - the catch is the broad SQLAlchemyError base class, so it covers every
+        DBAPI subclass (asserted directly against the route source, since a mock
+        side_effect alone can't prove the handler didn't catch a narrower type —
+        org memory: test-mock injection can mask production exception scope).
+    """
+
+    @pytest.mark.asyncio
+    async def test_upsert_operational_error_redirects_and_logs(
+        self,
+        client_factory: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from sqlalchemy.exc import OperationalError
+
+        state = "db-state-1"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "google", "code_verifier": "verifier"}),
+        }
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
+        oauth_mock.get_user_info = AsyncMock(
+            return_value=OAuthUserInfo(
+                provider="google",
+                provider_account_id="g-1",
+                email="e@e.com",
+                display_name=None,
+                avatar_url=None,
+            )
+        )
+        # statement/params carry sensitive SQL + connection detail — assert below
+        # that none of it reaches the redirect URL.
+        db_exc = OperationalError(
+            'SELECT * FROM oauth_accounts WHERE token = "supersecret"',
+            {"token": "supersecret"},
+            Exception("could not connect to server: host=db.internal"),
+        )
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            patch(
+                "src.app.routers.auth.find_or_create_oauth_user",
+                new_callable=AsyncMock,
+                side_effect=db_exc,
+            ),
+            caplog.at_level("ERROR", logger="src.app.routers.auth"),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/google/callback",
+                    params={"code": "abc", "state": state},
+                )
+
+        assert resp.status_code == 302
+        location = resp.headers["location"]
+        assert "error=oauth_upsert_failed" in location
+        # No DB internals leak into the user-facing redirect.
+        assert "supersecret" not in location
+        assert "oauth_accounts" not in location
+        assert "db.internal" not in location
+
+        records = [r for r in caplog.records if r.name == "src.app.routers.auth"]
+        assert len(records) == 1
+        assert records[0].levelname == "ERROR"
+        msg = records[0].getMessage()
+        assert "OAuth upsert DB error" in msg
+        assert "google" in msg
+        assert "OperationalError" in msg
+        # logger.exception attaches exc_info
+        assert records[0].exc_info is not None
+
+    @pytest.mark.asyncio
+    async def test_upsert_programming_error_redirects_and_logs(
+        self,
+        client_factory: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # This is the exact prod failure that surfaced #73:
+        # ProgrammingError: relation "oauth_accounts" does not exist.
+        from sqlalchemy.exc import ProgrammingError
+
+        state = "db-state-2"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "github", "code_verifier": "verifier"}),
+        }
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "ghtoken"})
+        oauth_mock.get_user_info = AsyncMock(
+            return_value=OAuthUserInfo(
+                provider="github",
+                provider_account_id="gh-1",
+                email="e@e.com",
+                display_name=None,
+                avatar_url=None,
+            )
+        )
+        db_exc = ProgrammingError(
+            "INSERT INTO oauth_accounts ...",
+            {},
+            Exception('relation "oauth_accounts" does not exist'),
+        )
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            patch(
+                "src.app.routers.auth.find_or_create_oauth_user",
+                new_callable=AsyncMock,
+                side_effect=db_exc,
+            ),
+            caplog.at_level("ERROR", logger="src.app.routers.auth"),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/github/callback",
+                    params={"code": "abc", "state": state},
+                )
+
+        assert resp.status_code == 302
+        location = resp.headers["location"]
+        assert "error=oauth_upsert_failed" in location
+        assert "oauth_accounts" not in location
+
+        records = [r for r in caplog.records if r.name == "src.app.routers.auth"]
+        assert len(records) == 1
+        assert records[0].levelname == "ERROR"
+        msg = records[0].getMessage()
+        assert "OAuth upsert DB error" in msg
+        assert "github" in msg
+        assert "ProgrammingError" in msg
+        assert records[0].exc_info is not None
+
+    def test_handler_catches_sqlalchemy_base_class_not_narrower_subclass(self) -> None:
+        """Static guard against exception-scope regression.
+
+        A mock side_effect proves the handler catches *the type the mock raises*,
+        but not that it catches the broad base class — if someone narrowed the
+        catch to e.g. `OperationalError`, the OperationalError test above would
+        still pass while a ProgrammingError at a different call site would once
+        again escape as a 500 (org memory: test-mock injection masks production
+        exception scope). So we assert against the route source directly: the
+        upsert handler must catch `SQLAlchemyError` (the DBAPI base), and the
+        module must import it from sqlalchemy.exc.
+        """
+        import inspect
+
+        from sqlalchemy.exc import (
+            DBAPIError,
+            IntegrityError,
+            OperationalError,
+            ProgrammingError,
+            SQLAlchemyError,
+        )
+
+        from src.app.routers import auth as auth_module
+
+        # The imported symbol the handler relies on must be the broad base class,
+        # and every DBAPI subclass the issue enumerates must be a subclass of it.
+        assert auth_module.SQLAlchemyError is SQLAlchemyError
+        for subclass in (DBAPIError, OperationalError, ProgrammingError, IntegrityError):
+            assert issubclass(subclass, SQLAlchemyError)
+
+        src = inspect.getsource(auth_module.oauth_callback_get)
+        assert "except SQLAlchemyError" in src, (
+            "oauth_callback_get must catch the SQLAlchemyError base class, not a "
+            "narrower DBAPI subclass — a narrower catch lets sibling DB errors "
+            "escape as a 500 (#73)."
+        )
