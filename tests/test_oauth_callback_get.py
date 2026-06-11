@@ -24,7 +24,10 @@ from src.app.database import get_db_session, get_redis
 from src.app.main import create_app
 from src.app.models.user import User
 from src.app.schemas.auth import OAuthUserInfo
-from src.app.services.user import OAuthUserResult
+from src.app.services.user import (
+    AccountExistsWithDifferentMethodError,
+    OAuthUserResult,
+)
 
 
 def _test_settings() -> Settings:
@@ -303,6 +306,59 @@ class TestOAuthCallbackGet:
         # exchange_code must have been called (so we're truly testing the second branch)
         oauth_mock.exchange_code.assert_awaited_once()
         oauth_mock.get_user_info.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cross_method_collision_redirects_with_account_exists_and_method(
+        self,
+        client_factory: Any,
+    ) -> None:
+        """#153 / #154 — when the service rejects a cross-method link, the
+        callback bounces the user back with `error=account_exists_different_method`
+        and a `method` param the frontend renders as
+        "{email} is already registered as {method}". No token is issued."""
+        state = "collision-state"
+        seed = {
+            f"oauth_state:{state}": json.dumps({"provider": "github", "code_verifier": "verifier"}),
+        }
+        oauth_mock = MagicMock()
+        oauth_mock.exchange_code = AsyncMock(return_value={"access_token": "gtoken"})
+        oauth_mock.get_user_info = AsyncMock(
+            return_value=OAuthUserInfo(
+                provider="github",
+                provider_account_id="gh-x",
+                email="alice@example.com",
+                display_name="Alice",
+                avatar_url=None,
+            )
+        )
+
+        with (
+            patch("src.app.routers.auth.get_oauth_provider", return_value=oauth_mock),
+            patch(
+                "src.app.routers.auth.find_or_create_oauth_user",
+                new_callable=AsyncMock,
+                side_effect=AccountExistsWithDifferentMethodError(
+                    email="alice@example.com", existing_methods=["google"]
+                ),
+            ),
+        ):
+            async with await client_factory(seed) as client:
+                resp = await client.get(
+                    "/auth/oauth/github/callback",
+                    params={"code": "abc", "state": state},
+                )
+
+        assert resp.status_code == 302
+        parsed = urlparse(resp.headers["location"])
+        assert parsed.path == "/auth/callback/github"
+        qs = parse_qs(parsed.query)
+        assert qs["error"] == ["account_exists_different_method"]
+        assert qs["method"] == ["google"]
+        # No token must be minted on the rejection path.
+        assert "token" not in qs
+        assert "token" not in parse_qs(parsed.fragment)
+        # No refresh cookie set either.
+        assert "refresh_token=" not in resp.headers.get("set-cookie", "")
 
     @pytest.mark.asyncio
     async def test_exchange_code_called_with_configured_redirect_uri(

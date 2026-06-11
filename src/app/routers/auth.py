@@ -55,7 +55,10 @@ from src.app.services.token import (
     store_refresh_token,
     validate_refresh_token,
 )
-from src.app.services.user import find_or_create_oauth_user
+from src.app.services.user import (
+    AccountExistsWithDifferentMethodError,
+    find_or_create_oauth_user,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,11 @@ OAUTH_ERROR_INVALID_STATE = "invalid_state"
 OAUTH_ERROR_EXCHANGE_FAILED = "oauth_exchange_failed"
 OAUTH_ERROR_USER_INFO_FAILED = "oauth_exchange_failed"
 OAUTH_ERROR_EMAIL_MISMATCH = "email_mismatch"
+# The verified email is already registered under a *different* auth method
+# (a password, or another OAuth provider). We refuse to silently link the new
+# provider (#153 / #154); the frontend renders "{email} is already registered
+# as {method}" using the accompanying `method` query param.
+OAUTH_ERROR_ACCOUNT_EXISTS = "account_exists_different_method"
 OAUTH_ERROR_PROVIDER_DENIED = "provider_denied"
 OAUTH_ERROR_UNSUPPORTED_PROVIDER = "unsupported_provider"
 OAUTH_ERROR_RATE_LIMITED = "rate_limited"
@@ -308,9 +316,21 @@ def _build_post_login_url(
     return path
 
 
-def _build_error_redirect(settings: Settings, provider: str, error_code: str) -> RedirectResponse:
-    """Build a RedirectResponse to the frontend post-login URL with an error param."""
-    url = _build_post_login_url(settings, provider, {"error": error_code})
+def _build_error_redirect(
+    settings: Settings,
+    provider: str,
+    error_code: str,
+    extra_params: dict[str, str] | None = None,
+) -> RedirectResponse:
+    """Build a RedirectResponse to the frontend post-login URL with an error param.
+
+    `extra_params` adds non-secret query params alongside `error` (e.g. the
+    `method` the email is already registered as, for the account_exists case).
+    """
+    params = {"error": error_code}
+    if extra_params:
+        params.update(extra_params)
+    url = _build_post_login_url(settings, provider, params)
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
 
@@ -495,6 +515,23 @@ async def oauth_callback_get(
             type(exc).__name__,
         )
         return _build_error_redirect(settings, provider, OAUTH_ERROR_UPSERT_FAILED)
+    except AccountExistsWithDifferentMethodError as exc:
+        # The verified email already belongs to an account using a *different*
+        # auth method (password, or another OAuth provider). We refuse to
+        # silently link the new provider (#153 / #154) — surface a clear,
+        # user-facing error carrying the existing primary method so the
+        # frontend can render "{email} is already registered as {method}".
+        logger.warning(
+            "OAuth cross-method link blocked: provider=%s existing_methods=%s",
+            provider,
+            ",".join(exc.existing_methods),
+        )
+        return _build_error_redirect(
+            settings,
+            provider,
+            OAUTH_ERROR_ACCOUNT_EXISTS,
+            {"method": exc.primary_method},
+        )
     except ValueError as exc:
         # Missing email / email-mismatch-style errors bounce the user back with a
         # readable error code the frontend can render.
