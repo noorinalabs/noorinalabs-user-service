@@ -42,6 +42,7 @@ dev = [
     "types-pyasn1>=0.6.0",
     "aiosqlite>=0.20.0",
     "neo4j>=6.1.0",
+    "testcontainers>=4.8.0",
 ]
 
 [tool.ruff]
