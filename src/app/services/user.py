@@ -7,6 +7,7 @@ from base64 import b64decode, b64encode
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -14,6 +15,13 @@ from src.app.models.oauth_account import OAuthAccount
 from src.app.models.role import UserRole
 from src.app.models.user import User
 from src.app.schemas.user import UserUpdate
+from src.app.utils.crypto import hash_password, verify_password
+
+# Pre-computed bcrypt hash used purely to equalize login timing when no user (or
+# no password) is found — see `authenticate_user`. Computed once at import so the
+# "user missing" branch still pays a bcrypt verify, denying a timing oracle that
+# would otherwise reveal which emails are registered.
+_DUMMY_PASSWORD_HASH = hash_password("timing-equalization-placeholder")
 
 # --- User CRUD ---
 
@@ -223,3 +231,82 @@ async def find_or_create_oauth_user(
     new_user.last_login_at = datetime.now(UTC)
     await db.commit()
     return OAuthUserResult(user=new_user, is_new_user=True)
+
+
+# --- Email / Password Auth ---
+
+
+class EmailAlreadyRegisteredError(Exception):
+    """Raised when email/password registration targets an already-taken email.
+
+    Mapped to HTTP 409 by the router. This unavoidably confirms the email exists
+    (the register surface either creates the account or it doesn't), so the
+    response message stays generic and the login path — where enumeration is
+    cheaper to exploit — is hardened separately (see `authenticate_user`).
+    """
+
+    def __init__(self, email: str) -> None:
+        self.email = email
+        super().__init__(f"{email} is already registered")
+
+
+async def create_email_user(
+    db: AsyncSession,
+    *,
+    email: str,
+    password_hash: str,
+    display_name: str | None = None,
+) -> User:
+    """Create a new email/password user.
+
+    `email_verified` is False — email/password signups must verify out-of-band
+    (the verification subsystem), unlike OAuth signups whose provider vouches for
+    the address. The DB unique constraint on `users.email` is the real guard
+    against duplicates; the pre-check is just a friendlier early exit, and the
+    `IntegrityError` catch closes the check-then-insert race.
+    """
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none() is not None:
+        raise EmailAlreadyRegisteredError(email)
+
+    user = User(
+        id=uuid.uuid4(),
+        email=email,
+        email_verified=False,
+        display_name=display_name,
+        password_hash=password_hash,
+        is_active=True,
+        last_login_at=datetime.now(UTC),
+    )
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise EmailAlreadyRegisteredError(email) from exc
+    return user
+
+
+async def authenticate_user(db: AsyncSession, *, email: str, password: str) -> User | None:
+    """Return the user iff the email/password pair is valid and active, else None.
+
+    Every failure mode collapses to a single `None` so the caller emits one
+    generic 401 — the response never reveals whether the email is unregistered,
+    has no password (OAuth-only), is wrong, or is deactivated. The "no user" /
+    "no password" branches still run a bcrypt verify against a dummy hash so the
+    response time does not leak whether the email exists.
+    """
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if user is None or not user.password_hash:
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+        return None
+
+    if not verify_password(password, user.password_hash):
+        return None
+
+    if not user.is_active:
+        return None
+
+    return user
