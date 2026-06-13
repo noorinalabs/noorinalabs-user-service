@@ -23,7 +23,7 @@
 # carried openssl/libssl3t64 3.5.6-1~deb13u1, vulnerable to CVE-2026-45447 (HIGH),
 # which began tripping ghcr-publish's Trivy gate on every PR once disclosed
 # (us#157). This digest ships 3.5.6-1~deb13u2, the Debian backport that fixes it.
-FROM python:3.12-slim@sha256:a39549e211a16149edf74e5fdc9ef03a6767e46cd987c5048b6659b6c9904c94 AS base
+FROM python:3.14-slim@sha256:d7a925f9eb9639a93e455b9f12c167569358818c0f62b51b88edbc8fcf34c421 AS base
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev && \
