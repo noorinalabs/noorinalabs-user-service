@@ -18,8 +18,12 @@
 # dependency compatibility first (cf. PR #41 "3.14 breaks deps"), land the base
 # switch in its own PR, and drop any then-redundant .trivyignore entries.
 #
-# Last pin: 2026-05-31 (digest resolved from Docker Hub at PR-open time).
-FROM python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203 AS base
+# Last pin: 2026-06-12 (digest resolved from Docker Hub at PR-open time) —
+# re-pinned per the "Trivy gate surfaces an OS-level CVE" cadence: the prior pin
+# carried openssl/libssl3t64 3.5.6-1~deb13u1, vulnerable to CVE-2026-45447 (HIGH),
+# which began tripping ghcr-publish's Trivy gate on every PR once disclosed
+# (us#157). This digest ships 3.5.6-1~deb13u2, the Debian backport that fixes it.
+FROM python:3.12-slim@sha256:a39549e211a16149edf74e5fdc9ef03a6767e46cd987c5048b6659b6c9904c94 AS base
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev && \
