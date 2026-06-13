@@ -1,6 +1,30 @@
 {
   "components": {
     "schemas": {
+      "AuthProviderInfo": {
+        "description": "A single available authentication method for `GET /auth/providers`.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "enabled"
+        ],
+        "title": "AuthProviderInfo",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -70,6 +94,28 @@
         "title": "JWKSResponse",
         "type": "object"
       },
+      "LoginRequest": {
+        "description": "Request body for email/password login.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
       "OAuthLoginResponse": {
         "description": "Response for OAuth login initiation \u2014 returns the authorization URL.\n\n`state` and `code_verifier` are retained for backwards compatibility with\nearlier SPA-driven callback flows. As of #66 the server-side GET callback\nreads them from Redis; clients may ignore both fields.",
         "properties": {
@@ -94,6 +140,23 @@
         "title": "OAuthLoginResponse",
         "type": "object"
       },
+      "ProvidersResponse": {
+        "description": "List of authentication methods the service supports + their enabled state.",
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/AuthProviderInfo"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "ProvidersResponse",
+        "type": "object"
+      },
       "RefreshRequest": {
         "description": "Request body for token refresh.",
         "properties": {
@@ -106,6 +169,40 @@
           "refresh_token"
         ],
         "title": "RefreshRequest",
+        "type": "object"
+      },
+      "RegisterRequest": {
+        "description": "Request body for email/password registration.\n\n`password` is bounded here only as a coarse guard (a hard floor and the\nbcrypt 72-byte ceiling). The configurable policy minimum\n(`AUTH_PASSWORD_MIN_LENGTH`) is enforced in the router where settings are\navailable \u2014 see `routers/auth.py`.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "RegisterRequest",
         "type": "object"
       },
       "RevokeAllResponse": {
@@ -2196,6 +2293,48 @@
         ]
       }
     },
+    "/auth/login": {
+      "post": {
+        "description": "Authenticate an email/password user and return a token pair.\n\nOn any failure (unknown email, wrong password, OAuth-only account, or a\ndeactivated account) the response is a single generic 401 so the endpoint\nnever reveals which emails are registered.",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/oauth/{provider}/callback": {
       "get": {
         "description": "Server-side OAuth callback \u2014 handles the provider's GET redirect.\n\nThis is the endpoint OAuth providers (Google, GitHub, Apple, Facebook) redirect\nthe user's browser to after consent. It:\n  1. Validates state (CSRF) against Redis, retrieves the stored code_verifier.\n  2. Exchanges the authorization code for provider tokens.\n  3. Resolves user info and finds-or-creates the local user.\n  4. Mints an access token + refresh token, sets the refresh token as an\n     httpOnly cookie, and redirects the browser to AUTH_OAUTH_POST_LOGIN_URL\n     with the access token on a query param (matching the frontend\n     AuthCallbackPage contract).\n\nOn any error, redirects to AUTH_OAUTH_POST_LOGIN_URL with ?error=<code>. We\nuse browser redirects for every exit path because this URL is hit by the\nuser's browser, not by JS \u2014 a JSON error response would be a dead end.\n\nIssue: noorinalabs/noorinalabs-user-service#66.",
@@ -2318,6 +2457,70 @@
           }
         },
         "summary": "Oauth Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/providers": {
+      "get": {
+        "description": "List the auth methods this service supports and whether each is enabled.\n\nEmail/password is always available; each OAuth provider is `enabled` only\nwhen its credentials are configured. The frontend uses this to render the\ncorrect set of login buttons.",
+        "operationId": "list_providers_auth_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvidersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Providers",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "description": "Register a new email/password user and return a token pair (auto-login).\n\nThe account is created with `email_verified=False` \u2014 the caller is logged in\nimmediately for parity with the OAuth flow, and email verification is handled\nout-of-band by the verification subsystem.",
+        "operationId": "register_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register",
         "tags": [
           "auth"
         ]
