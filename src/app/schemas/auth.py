@@ -3,7 +3,53 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+# --- Email/Password Schemas ---
+
+
+class RegisterRequest(BaseModel):
+    """Request body for email/password registration.
+
+    `password` is bounded here only as a coarse guard (a hard floor and the
+    bcrypt 72-byte ceiling). The configurable policy minimum
+    (`AUTH_PASSWORD_MIN_LENGTH`) is enforced in the router where settings are
+    available — see `routers/auth.py`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=256)
+    display_name: str | None = Field(default=None, max_length=255)
+
+
+class LoginRequest(BaseModel):
+    """Request body for email/password login."""
+
+    model_config = ConfigDict(frozen=True)
+
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=256)
+
+
+class AuthProviderInfo(BaseModel):
+    """A single available authentication method for `GET /auth/providers`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str  # "email" | "google" | "github" | "apple" | "facebook"
+    type: str  # "password" | "oauth"
+    enabled: bool
+
+
+class ProvidersResponse(BaseModel):
+    """List of authentication methods the service supports + their enabled state."""
+
+    model_config = ConfigDict(frozen=True)
+
+    providers: list[AuthProviderInfo]
+
 
 # --- JWT Token Schemas ---
 

@@ -394,6 +394,29 @@ def get_oauth_provider(provider_name: str, settings: Settings) -> BaseOAuthProvi
     return provider_cls(settings)
 
 
+def is_oauth_provider_configured(provider: OAuthProvider, settings: Settings) -> bool:
+    """Whether the given OAuth provider has all its credentials configured.
+
+    Drives the `enabled` flag in `GET /auth/providers` so the frontend only
+    renders provider buttons the backend can actually complete a flow for. A
+    provider whose env vars are blank is "supported but disabled".
+    """
+    if provider is OAuthProvider.GOOGLE:
+        return bool(settings.AUTH_GOOGLE_CLIENT_ID and settings.AUTH_GOOGLE_CLIENT_SECRET)
+    if provider is OAuthProvider.GITHUB:
+        return bool(settings.AUTH_GITHUB_CLIENT_ID and settings.AUTH_GITHUB_CLIENT_SECRET)
+    if provider is OAuthProvider.APPLE:
+        return bool(
+            settings.AUTH_APPLE_CLIENT_ID
+            and settings.AUTH_APPLE_TEAM_ID
+            and settings.AUTH_APPLE_KEY_ID
+            and settings.AUTH_APPLE_PRIVATE_KEY
+        )
+    if provider is OAuthProvider.FACEBOOK:
+        return bool(settings.AUTH_FACEBOOK_APP_ID and settings.AUTH_FACEBOOK_APP_SECRET)
+    return False
+
+
 def _urlencode(params: dict[str, str]) -> str:
     """URL-encode query parameters."""
     from urllib.parse import urlencode

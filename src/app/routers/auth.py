@@ -37,14 +37,23 @@ from src.app.config import Settings, get_settings
 from src.app.database import get_db_session, get_redis, get_redis_optional
 from src.app.models.user import User
 from src.app.schemas.auth import (
+    AuthProviderInfo,
+    LoginRequest,
     OAuthLoginResponse,
+    ProvidersResponse,
     RefreshRequest,
+    RegisterRequest,
     RevokeRequest,
     TokenRequest,
     TokenResponse,
     TokenValidationResponse,
 )
-from src.app.services.oauth import OAuthProvider, generate_pkce_pair, get_oauth_provider
+from src.app.services.oauth import (
+    OAuthProvider,
+    generate_pkce_pair,
+    get_oauth_provider,
+    is_oauth_provider_configured,
+)
 from src.app.services.rate_limit import check_rate_limit, enforce_ip_rate_limit
 from src.app.services.subscription import get_subscription_status
 from src.app.services.token import (
@@ -57,8 +66,12 @@ from src.app.services.token import (
 )
 from src.app.services.user import (
     AccountExistsWithDifferentMethodError,
+    EmailAlreadyRegisteredError,
+    authenticate_user,
+    create_email_user,
     find_or_create_oauth_user,
 )
+from src.app.utils.crypto import MAX_PASSWORD_BYTES, hash_password
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +110,180 @@ OAUTH_ERROR_RATE_LIMITED = "rate_limited"
 OAUTH_ERROR_UPSERT_FAILED = "oauth_upsert_failed"
 
 VALID_PROVIDERS = {p.value for p in OAuthProvider}
+
+
+# --- Email / Password Endpoints ---
+
+
+async def _load_user_roles(db: AsyncSession, user_id: uuid.UUID) -> list[str]:
+    """Fetch the role names assigned to a user (for access-token claims)."""
+    roles_result = await db.execute(
+        text(
+            "SELECT r.name FROM roles r "
+            "JOIN user_roles ur ON ur.role_id = r.id "
+            "WHERE ur.user_id = :uid"
+        ),
+        {"uid": user_id},
+    )
+    return [row[0] for row in roles_result.fetchall()]
+
+
+async def _issue_token_pair(
+    *,
+    settings: Settings,
+    db: AsyncSession,
+    request: Request,
+    user_id: uuid.UUID,
+    email: str,
+    roles: list[str],
+    subscription_status: str,
+) -> TokenResponse:
+    """Mint an access + refresh token pair and persist the refresh token.
+
+    Shared by the email login and register endpoints; produces the same
+    `TokenResponse` shape as the OAuth `/auth/token` exchange so every login
+    path hands the frontend an identical token contract.
+    """
+    access_token, expires_at = create_access_token(
+        settings=settings,
+        user_id=user_id,
+        email=email,
+        roles=roles,
+        subscription_status=subscription_status,
+    )
+    refresh_token = create_refresh_token()
+    await store_refresh_token(
+        db=db,
+        user_id=user_id,
+        refresh_token=refresh_token,
+        expires_days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    expires_in = int((expires_at - datetime.now(UTC)).total_seconds())
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=expires_in,
+    )
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+async def register(
+    body: RegisterRequest,
+    request: Request,
+    settings: SettingsDep,
+    db: DbDep,
+    rl_redis: RateLimitRedisDep,
+) -> TokenResponse:
+    """Register a new email/password user and return a token pair (auto-login).
+
+    The account is created with `email_verified=False` — the caller is logged in
+    immediately for parity with the OAuth flow, and email verification is handled
+    out-of-band by the verification subsystem.
+    """
+    await enforce_ip_rate_limit(request, rl_redis, settings, bucket="register")
+
+    # Configurable policy minimum (settings) layered over the schema's coarse
+    # bounds. Enforced here because the schema is static and cannot read settings.
+    if len(body.password) < settings.AUTH_PASSWORD_MIN_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Password must be at least {settings.AUTH_PASSWORD_MIN_LENGTH} characters",
+        )
+    # bcrypt silently truncates beyond 72 bytes — reject rather than hash a
+    # value whose tail is ignored (two passwords sharing a 72-byte prefix would
+    # otherwise authenticate interchangeably).
+    if len(body.password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Password must not exceed {MAX_PASSWORD_BYTES} bytes",
+        )
+
+    password_hash = hash_password(body.password)
+    try:
+        user = await create_email_user(
+            db,
+            email=body.email,
+            password_hash=password_hash,
+            display_name=body.display_name,
+        )
+    except EmailAlreadyRegisteredError as exc:
+        # Generic message — the status code already implies existence on this
+        # surface, so we avoid echoing the address back.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        ) from exc
+
+    subscription_status = await get_subscription_status(db, user.id)
+    return await _issue_token_pair(
+        settings=settings,
+        db=db,
+        request=request,
+        user_id=user.id,
+        email=user.email,
+        roles=[],  # fresh account has no roles yet
+        subscription_status=subscription_status,
+    )
+
+
+@router.post("/login", response_model=TokenResponse, status_code=status.HTTP_200_OK)
+async def login(
+    body: LoginRequest,
+    request: Request,
+    settings: SettingsDep,
+    db: DbDep,
+    rl_redis: RateLimitRedisDep,
+) -> TokenResponse:
+    """Authenticate an email/password user and return a token pair.
+
+    On any failure (unknown email, wrong password, OAuth-only account, or a
+    deactivated account) the response is a single generic 401 so the endpoint
+    never reveals which emails are registered.
+    """
+    await enforce_ip_rate_limit(request, rl_redis, settings, bucket="login")
+
+    user = await authenticate_user(db, email=body.email, password=body.password)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    user.last_login_at = datetime.now(UTC)
+    roles = await _load_user_roles(db, user.id)
+    subscription_status = await get_subscription_status(db, user.id)
+    # store_refresh_token commits the session, persisting the last_login_at touch.
+    return await _issue_token_pair(
+        settings=settings,
+        db=db,
+        request=request,
+        user_id=user.id,
+        email=user.email,
+        roles=roles,
+        subscription_status=subscription_status,
+    )
+
+
+@router.get("/providers", response_model=ProvidersResponse)
+async def list_providers(settings: SettingsDep) -> ProvidersResponse:
+    """List the auth methods this service supports and whether each is enabled.
+
+    Email/password is always available; each OAuth provider is `enabled` only
+    when its credentials are configured. The frontend uses this to render the
+    correct set of login buttons.
+    """
+    providers = [AuthProviderInfo(id="email", type="password", enabled=True)]
+    providers.extend(
+        AuthProviderInfo(
+            id=provider.value,
+            type="oauth",
+            enabled=is_oauth_provider_configured(provider, settings),
+        )
+        for provider in OAuthProvider
+    )
+    return ProvidersResponse(providers=providers)
 
 
 # --- JWT Token Endpoints ---
