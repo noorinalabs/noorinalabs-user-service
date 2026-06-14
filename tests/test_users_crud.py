@@ -16,6 +16,7 @@ from src.app.config import Settings
 from src.app.database import get_db_session
 from src.app.main import create_app
 from src.app.models.role import Role, UserRole
+from src.app.models.session import Session
 from src.app.models.user import Base, User
 
 # Generate a test RSA key pair (once per module)
@@ -324,4 +325,90 @@ class TestRoleEndpoints:
             headers=_auth_header(regular_user),
             json={"role_id": str(seed_roles["researcher"].id)},
         )
+        assert resp.status_code == 403
+
+
+class TestUserStats:
+    @pytest.mark.asyncio
+    async def test_admin_gets_aggregate_counts(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        regular_user: User,
+        db_session: AsyncSession,
+    ) -> None:
+        # A soft-deleted account (counts toward total + deactivated, not active).
+        inactive = User(email="gone@test.com", email_verified=True, is_active=False)
+        db_session.add(inactive)
+        # An account older than the 7-day registration window.
+        old = User(
+            email="old@test.com",
+            email_verified=True,
+            is_active=True,
+            created_at=datetime.now(UTC) - timedelta(days=30),
+        )
+        db_session.add(old)
+        await db_session.flush()
+
+        # One live session and one revoked session for the same user — only the
+        # live one should count toward active_sessions.
+        db_session.add(
+            Session(
+                user_id=admin_user.id,
+                token_hash="live-token",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        db_session.add(
+            Session(
+                user_id=admin_user.id,
+                token_hash="revoked-token",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                revoked_at=datetime.now(UTC),
+            )
+        )
+        # An expired session — also excluded.
+        db_session.add(
+            Session(
+                user_id=regular_user.id,
+                token_hash="expired-token",
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        await db_session.commit()
+
+        resp = await client.get("/api/v1/users/stats", headers=_auth_header(admin_user))
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # admin_user + regular_user + inactive + old
+        assert data["total_users"] == 4
+        assert data["active_users"] == 3
+        assert data["deactivated_users"] == 1
+        # admin + regular + inactive registered "now"; `old` is 30 days back.
+        assert data["new_registrations_7d"] == 3
+        assert data["active_sessions"] == 1
+
+        by_role = {r["role"]: r["count"] for r in data["by_role"]}
+        assert by_role["admin"] == 1
+        assert by_role["reader"] == 1
+
+    @pytest.mark.asyncio
+    async def test_non_admin_forbidden(self, client: AsyncClient, regular_user: User) -> None:
+        resp = await client.get("/api/v1/users/stats", headers=_auth_header(regular_user))
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_rejected(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/v1/users/stats")
+        assert resp.status_code in (401, 422)
+
+    @pytest.mark.asyncio
+    async def test_stats_path_not_parsed_as_user_id(
+        self, client: AsyncClient, regular_user: User
+    ) -> None:
+        # Guards the route ordering: GET /users/stats must hit the stats handler
+        # (403 for a non-admin), NOT the /{user_id} handler (which would 422 on
+        # the non-UUID "stats" path segment).
+        resp = await client.get("/api/v1/users/stats", headers=_auth_header(regular_user))
         assert resp.status_code == 403

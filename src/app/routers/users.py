@@ -8,6 +8,7 @@ from src.app.schemas.user import (
     RoleRead,
     UserListResponse,
     UserRead,
+    UserStats,
     UserUpdate,
 )
 from src.app.services import rbac
@@ -48,6 +49,17 @@ async def update_current_user_profile(
     updated = await user_svc.update_profile(db, current_user, data)
     await db.commit()
     return _user_to_read(updated)
+
+
+# Registered before the `/{user_id}` route so "stats" is matched as a literal
+# path segment rather than parsed as a (then-invalid) user UUID.
+@router.get("/stats", response_model=UserStats)
+async def get_user_stats(
+    _admin: AdminUserDep,
+    db: DbDep,
+) -> UserStats:
+    """Return aggregate user counts for the admin dashboard (admin only)."""
+    return await user_svc.get_user_stats(db)
 
 
 @router.get("/{user_id}", response_model=UserRead)
