@@ -61,7 +61,12 @@ class Settings(BaseSettings):
     JWT_PRIVATE_KEY: str = ""
     JWT_PUBLIC_KEY: str = ""
     JWT_ALGORITHM: str = "RS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    # Access token lifetime. The 30-day refresh window means the intent is
+    # month-long sessions via silent refresh (refresh-on-401 on the frontend);
+    # a too-tight access window surfaced the session-expired modal too often when
+    # a refresh hiccupped, so this was lengthened 15→60 min (us#166). Stays
+    # env-overridable (JWT_ACCESS_TOKEN_EXPIRE_MINUTES).
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     # CORS

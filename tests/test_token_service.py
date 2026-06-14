@@ -162,12 +162,43 @@ class TestAccessToken:
         with pytest.raises(JWTError):
             decode_access_token(settings, tampered)
 
-    def test_access_token_expiry_is_15_min(self) -> None:
+    def test_access_token_expiry_is_60_min(self) -> None:
+        # Default access TTL was lengthened 15→60 min so month-long sessions
+        # (30-day refresh window) ride through a refresh hiccup without surfacing
+        # the session-expired modal too often (us#166).
         settings = _test_settings()
         _, expires_at = create_access_token(settings, uuid.uuid4(), "t@t.com", [], "free")
-        expected = datetime.now(UTC) + timedelta(minutes=15)
+        expected = datetime.now(UTC) + timedelta(minutes=60)
         # Allow 5 seconds tolerance
         assert abs((expires_at - expected).total_seconds()) < 5
+
+    def test_access_token_expiry_honors_settings_override(self) -> None:
+        # The TTL is env-overridable; create_access_token must read the configured
+        # value rather than a hardcoded window.
+        settings = Settings(
+            DATABASE_URL="sqlite+aiosqlite:///:memory:",
+            JWT_PRIVATE_KEY="",
+            JWT_PUBLIC_KEY="",
+            JWT_ACCESS_TOKEN_EXPIRE_MINUTES=5,
+        )
+        _, expires_at = create_access_token(settings, uuid.uuid4(), "t@t.com", [], "free")
+        expected = datetime.now(UTC) + timedelta(minutes=5)
+        assert abs((expires_at - expected).total_seconds()) < 5
+
+
+class TestAccessTokenTTLConfig:
+    def test_default_ttl_is_60_min(self) -> None:
+        settings = Settings(DATABASE_URL="sqlite+aiosqlite:///:memory:")
+        assert settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES == 60
+
+    def test_ttl_is_env_overridable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "120")
+        settings = Settings(DATABASE_URL="sqlite+aiosqlite:///:memory:")
+        assert settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES == 120
+
+    def test_refresh_window_unchanged_at_30_days(self) -> None:
+        settings = Settings(DATABASE_URL="sqlite+aiosqlite:///:memory:")
+        assert settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS == 30
 
 
 class TestRefreshToken:
