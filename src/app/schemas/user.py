@@ -40,6 +40,31 @@ class UserListResponse(BaseModel):
     model_config = {"frozen": True}
 
 
+class RoleCount(BaseModel):
+    role: str
+    count: int
+
+    model_config = {"frozen": True}
+
+
+class UserStats(BaseModel):
+    """Aggregate user counts for the admin dashboard.
+
+    ``deactivated_users`` counts soft-deleted accounts (``is_active = false``);
+    the service has no separate "suspended" state. ``active_sessions`` is the
+    number of non-revoked, unexpired session rows across all users.
+    """
+
+    total_users: int
+    active_users: int
+    deactivated_users: int
+    new_registrations_7d: int
+    active_sessions: int
+    by_role: list[RoleCount]
+
+    model_config = {"frozen": True}
+
+
 class RoleRead(BaseModel):
     id: uuid.UUID
     name: str

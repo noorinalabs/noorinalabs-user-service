@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import uuid
 from base64 import b64decode, b64encode
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from src.app.models.oauth_account import OAuthAccount
-from src.app.models.role import UserRole
+from src.app.models.role import Role, UserRole
+from src.app.models.session import Session
 from src.app.models.user import User
-from src.app.schemas.user import UserUpdate
+from src.app.schemas.user import RoleCount, UserStats, UserUpdate
 from src.app.utils.crypto import hash_password, verify_password
 
 # Pre-computed bcrypt hash used purely to equalize login timing when no user (or
@@ -81,6 +82,52 @@ async def list_users(
         next_cursor = b64encode(raw.encode()).decode()
 
     return users, next_cursor
+
+
+async def get_user_stats(db: AsyncSession) -> UserStats:
+    """Aggregate user counts for the admin dashboard.
+
+    All counts are computed with SQL aggregates (no row materialization), so
+    this stays cheap as the user table grows. ``deactivated_users`` is derived
+    as ``total - active`` to keep the two figures internally consistent.
+    """
+    total_users = (await db.execute(select(func.count()).select_from(User))).scalar_one()
+    active_users = (
+        await db.execute(select(func.count()).select_from(User).where(User.is_active.is_(True)))
+    ).scalar_one()
+
+    week_ago = datetime.now(UTC) - timedelta(days=7)
+    new_registrations_7d = (
+        await db.execute(select(func.count()).select_from(User).where(User.created_at >= week_ago))
+    ).scalar_one()
+
+    now = datetime.now(UTC)
+    active_sessions = (
+        await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.revoked_at.is_(None), Session.expires_at > now)
+        )
+    ).scalar_one()
+
+    role_rows = (
+        await db.execute(
+            select(Role.name, func.count(UserRole.user_id))
+            .join(UserRole, UserRole.role_id == Role.id)
+            .group_by(Role.name)
+            .order_by(Role.name)
+        )
+    ).all()
+    by_role = [RoleCount(role=name, count=count) for name, count in role_rows]
+
+    return UserStats(
+        total_users=total_users,
+        active_users=active_users,
+        deactivated_users=total_users - active_users,
+        new_registrations_7d=new_registrations_7d,
+        active_sessions=active_sessions,
+        by_role=by_role,
+    )
 
 
 async def soft_delete(db: AsyncSession, user_id: uuid.UUID) -> User | None:
