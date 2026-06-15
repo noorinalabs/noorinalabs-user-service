@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from jose.exceptions import JWTError
 from redis.asyncio import Redis
@@ -35,15 +35,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import Settings, get_settings
 from src.app.database import get_db_session, get_redis, get_redis_optional
+from src.app.dependencies import get_current_user
 from src.app.models.user import User
 from src.app.schemas.auth import (
     AuthProviderInfo,
+    ForwardAuthResponse,
     LoginRequest,
     OAuthLoginResponse,
     ProvidersResponse,
     RefreshRequest,
     RegisterRequest,
     RevokeRequest,
+    SsoCookieResponse,
     TokenRequest,
     TokenResponse,
     TokenValidationResponse,
@@ -55,11 +58,14 @@ from src.app.services.oauth import (
     is_oauth_provider_configured,
 )
 from src.app.services.rate_limit import check_rate_limit, enforce_ip_rate_limit
+from src.app.services.rbac import get_role_level, get_user_role_names, user_has_minimum_role
 from src.app.services.subscription import get_subscription_status
 from src.app.services.token import (
     create_access_token,
     create_refresh_token,
+    create_sso_token,
     decode_access_token,
+    decode_sso_token,
     revoke_refresh_token,
     store_refresh_token,
     validate_refresh_token,
@@ -110,6 +116,12 @@ OAUTH_ERROR_RATE_LIMITED = "rate_limited"
 OAUTH_ERROR_UPSERT_FAILED = "oauth_upsert_failed"
 
 VALID_PROVIDERS = {p.value for p in OAuthProvider}
+
+# Identity headers emitted by GET /auth/forward-auth on success. Caddy's
+# `forward_auth` copies these upstream to Grafana's auth-proxy (deploy#458), and
+# strips any client-supplied X-Webauth-* before this hop so they cannot be forged.
+WEBAUTH_USER_HEADER = "X-Webauth-User"
+WEBAUTH_ROLE_HEADER = "X-Webauth-Role"
 
 
 # --- Email / Password Endpoints ---
@@ -460,6 +472,117 @@ async def validate_token(
         subscription_status=payload.get("subscription_status"),
         expires_at=expires_at,
     )
+
+
+# --- SSO Session Cookie + Forward-Auth (us#171 / deploy#458) ---
+
+
+def _highest_role(roles: list[str]) -> str:
+    """Return the highest-privilege role name from a claim (for X-Webauth-Role).
+
+    Empty string when the user has no recognized role — never reached on the 200
+    path of forward-auth (which requires admin), but keeps the header well-defined.
+    """
+    return max(roles, key=get_role_level, default="")
+
+
+@router.post("/sso-cookie", response_model=SsoCookieResponse, status_code=status.HTTP_200_OK)
+async def issue_sso_cookie(
+    response: Response,
+    settings: SettingsDep,
+    db: DbDep,
+    user: Annotated[User, Depends(get_current_user)],
+) -> SsoCookieResponse:
+    """Mint a short-lived parent-domain SSO cookie from a valid app bearer.
+
+    The frontend calls this on a `/grafana` click (carrying its localStorage access
+    token as a normal Bearer) so the *next* top-level browser navigation to a
+    sibling subdomain (`isnad.{base}/grafana`) ships a credential Caddy's
+    `forward_auth` can validate via `GET /auth/forward-auth`.
+
+    Any authenticated user may mint — admin gating happens at forward-auth, not
+    here, so a non-admin still receives a cookie and is cleanly rejected (403) at
+    the Grafana edge rather than being unable to obtain a cookie at all. Roles are
+    read authoritatively from the DB at mint time; the short TTL bounds staleness.
+    """
+    roles = await get_user_role_names(db, user.id)
+    _token, _expires_at = create_sso_token(
+        settings=settings,
+        user_id=user.id,
+        email=user.email,
+        roles=roles,
+        ttl_seconds=settings.AUTH_SSO_COOKIE_TTL_SECONDS,
+    )
+    # Parent-domain + path=/ so the cookie rides every top-level nav to any
+    # *.{domain} subdomain. HttpOnly keeps it out of JS (the access token already
+    # covers same-origin fetches); Secure + SameSite=Lax per the owner-approved
+    # trade-off (us#171).
+    response.set_cookie(
+        key=settings.AUTH_SSO_COOKIE_NAME,
+        value=_token,
+        max_age=settings.AUTH_SSO_COOKIE_TTL_SECONDS,
+        domain=settings.AUTH_SSO_COOKIE_DOMAIN,
+        httponly=True,
+        secure=settings.AUTH_SSO_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return SsoCookieResponse(
+        cookie_name=settings.AUTH_SSO_COOKIE_NAME,
+        expires_in=settings.AUTH_SSO_COOKIE_TTL_SECONDS,
+    )
+
+
+@router.get("/forward-auth", response_model=ForwardAuthResponse)
+async def forward_auth(
+    request: Request,
+    response: Response,
+    settings: SettingsDep,
+) -> ForwardAuthResponse:
+    """Cookie-based forward-auth gate for Caddy's `forward_auth` (deploy#458).
+
+    Validates the parent-domain SSO cookie minted by `POST /auth/sso-cookie` and
+    authorizes admin-only access to the observability surface (Grafana):
+
+      - no / invalid / expired cookie  → 401
+      - valid cookie, non-admin role   → 403
+      - valid cookie, admin role       → 200 + X-Webauth-User / X-Webauth-Role
+
+    Distinct from the Bearer-only `GET /auth/token/validate`: this reads a *cookie*,
+    not an Authorization header, because the triggering request is a top-level
+    browser navigation that carries no Bearer. The admin decision is made
+    server-side from the RS256-signed cookie claims — the client cannot forge it,
+    and Caddy strips any client-supplied `X-Webauth-*` before this hop.
+    """
+    cookie = request.cookies.get(settings.AUTH_SSO_COOKIE_NAME)
+    if not cookie:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing SSO session cookie",
+        )
+
+    try:
+        payload = decode_sso_token(settings, cookie)
+    except JWTError as err:
+        # Bad signature, wrong token type, or expiry — all collapse to 401 so the
+        # endpoint never distinguishes "no cookie" from "forged/stale cookie".
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired SSO session cookie",
+        ) from err
+
+    roles: list[str] = payload.get("roles", [])
+    if not user_has_minimum_role(roles, "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    # Identity for Grafana's auth-proxy. Prefer email (a human-friendly login);
+    # fall back to the user id (`sub`) if the cookie carried no email.
+    response.headers[WEBAUTH_USER_HEADER] = str(payload.get("email") or payload.get("sub", ""))
+    response.headers[WEBAUTH_ROLE_HEADER] = _highest_role(roles)
+    return ForwardAuthResponse()
 
 
 # --- OAuth Endpoints ---
