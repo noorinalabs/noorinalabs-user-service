@@ -148,6 +148,26 @@ class Settings(BaseSettings):
     # set to False in local HTTP dev.
     AUTH_OAUTH_REFRESH_COOKIE_SECURE: bool = True
 
+    # SSO session cookie — parent-domain carry for Caddy `forward_auth` (us#171 /
+    # deploy#458). A short-lived RS256-signed token minted from a valid app bearer
+    # (POST /auth/sso-cookie) and dropped as a parent-domain cookie so a top-level
+    # browser navigation to a sibling subdomain (e.g. isnad.{base}/grafana) carries
+    # a credential GET /auth/forward-auth can validate. The app access token lives
+    # only in SPA localStorage and is never sent on a top-level nav, which is why a
+    # cookie is needed here.
+    AUTH_SSO_COOKIE_NAME: str = "nl_sso"
+    # Parent domain so every *.noorinalabs.com subdomain receives the cookie. Owner
+    # accepted the widened cross-subdomain surface (us#171, 2026-06-14) in exchange
+    # for the short TTL + HttpOnly below. Override per-env (e.g. a staging base).
+    AUTH_SSO_COOKIE_DOMAIN: str = "noorinalabs.com"
+    # Short TTL (seconds) — bounds the window in which a role revoked after mint can
+    # still pass forward-auth (forward-auth trusts the signed claim, not a live DB
+    # read, so it stays cheap on every Grafana request). Keep small.
+    AUTH_SSO_COOKIE_TTL_SECONDS: int = 300
+    # Secure flag on the SSO cookie. Must be True in production (HTTPS); set to False
+    # only for local HTTP dev.
+    AUTH_SSO_COOKIE_SECURE: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @computed_field  # type: ignore[prop-decorator]

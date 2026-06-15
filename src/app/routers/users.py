@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, status
 
 from src.app.dependencies import AdminUserDep, CurrentUserDep, DbDep
+from src.app.schemas.profile import ProfileRead, ProfileUpdate
 from src.app.schemas.user import (
     RoleAssignment,
     RoleRead,
@@ -49,6 +50,31 @@ async def update_current_user_profile(
     updated = await user_svc.update_profile(db, current_user, data)
     await db.commit()
     return _user_to_read(updated)
+
+
+def _profile_to_read(u: object) -> ProfileRead:
+    from src.app.models.user import User
+
+    assert isinstance(u, User)
+    return ProfileRead(user_id=u.id, preferences=u.preferences or {})
+
+
+@router.get("/me/profile", response_model=ProfileRead)
+async def get_current_user_preferences(current_user: CurrentUserDep) -> ProfileRead:
+    """Return the authenticated user's preferences blob (own profile only)."""
+    return _profile_to_read(current_user)
+
+
+@router.put("/me/profile", response_model=ProfileRead)
+async def replace_current_user_preferences(
+    data: ProfileUpdate,
+    current_user: CurrentUserDep,
+    db: DbDep,
+) -> ProfileRead:
+    """Replace the authenticated user's preferences wholesale (own profile only)."""
+    updated = await user_svc.replace_preferences(db, current_user, data.preferences.to_storage())
+    await db.commit()
+    return _profile_to_read(updated)
 
 
 # Registered before the `/{user_id}` route so "stats" is matched as a literal

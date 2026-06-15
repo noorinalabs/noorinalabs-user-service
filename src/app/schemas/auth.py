@@ -102,6 +102,33 @@ class TokenValidationResponse(BaseModel):
     expires_at: datetime | None = None
 
 
+class SsoCookieResponse(BaseModel):
+    """Acknowledgement for `POST /auth/sso-cookie`.
+
+    The credential itself rides in the `Set-Cookie` header — the body only echoes
+    the cookie name and lifetime so the frontend can schedule a re-mint before the
+    short TTL lapses (us#171).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: str = "ok"
+    cookie_name: str
+    expires_in: int
+
+
+class ForwardAuthResponse(BaseModel):
+    """Body for a successful `GET /auth/forward-auth`.
+
+    The load-bearing output is the `X-Webauth-User` / `X-Webauth-Role` response
+    headers that Caddy copies upstream to Grafana; the body is a minimal ack.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: str = "ok"
+
+
 class JWK(BaseModel):
     """JSON Web Key representation."""
 

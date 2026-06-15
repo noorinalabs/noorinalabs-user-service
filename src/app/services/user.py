@@ -45,6 +45,19 @@ async def update_profile(db: AsyncSession, user: User, data: UserUpdate) -> User
     return user
 
 
+async def replace_preferences(db: AsyncSession, user: User, preferences: dict[str, object]) -> User:
+    """Replace the user's preferences blob (PUT semantics).
+
+    Assigning a brand-new dict makes SQLAlchemy mark the JSON column dirty (it
+    tracks attribute reassignment, not in-place mutation), so the update is
+    persisted without needing a mutable-dict wrapper.
+    """
+    user.preferences = dict(preferences)
+    await db.flush()
+    await db.refresh(user)
+    return user
+
+
 async def list_users(
     db: AsyncSession,
     cursor: str | None = None,
