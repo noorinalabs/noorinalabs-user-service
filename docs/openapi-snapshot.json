@@ -25,6 +25,18 @@
         "title": "AuthProviderInfo",
         "type": "object"
       },
+      "ForwardAuthResponse": {
+        "description": "Body for a successful `GET /auth/forward-auth`.\n\nThe load-bearing output is the `X-Webauth-User` / `X-Webauth-Role` response\nheaders that Caddy copies upstream to Grafana; the body is a minimal ack.",
+        "properties": {
+          "status": {
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "ForwardAuthResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -478,6 +490,30 @@
           "expires_at"
         ],
         "title": "SessionResponse",
+        "type": "object"
+      },
+      "SsoCookieResponse": {
+        "description": "Acknowledgement for `POST /auth/sso-cookie`.\n\nThe credential itself rides in the `Set-Cookie` header \u2014 the body only echoes\nthe cookie name and lifetime so the frontend can schedule a re-mint before the\nshort TTL lapses (us#171).",
+        "properties": {
+          "cookie_name": {
+            "title": "Cookie Name",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "status": {
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cookie_name",
+          "expires_in"
+        ],
+        "title": "SsoCookieResponse",
         "type": "object"
       },
       "SubscriptionCreate": {
@@ -2560,6 +2596,28 @@
         ]
       }
     },
+    "/auth/forward-auth": {
+      "get": {
+        "description": "Cookie-based forward-auth gate for Caddy's `forward_auth` (deploy#458).\n\nValidates the parent-domain SSO cookie minted by `POST /auth/sso-cookie` and\nauthorizes admin-only access to the observability surface (Grafana):\n\n  - no / invalid / expired cookie  \u2192 401\n  - valid cookie, non-admin role   \u2192 403\n  - valid cookie, admin role       \u2192 200 + X-Webauth-User / X-Webauth-Role\n\nDistinct from the Bearer-only `GET /auth/token/validate`: this reads a *cookie*,\nnot an Authorization header, because the triggering request is a top-level\nbrowser navigation that carries no Bearer. The admin decision is made\nserver-side from the RS256-signed cookie claims \u2014 the client cannot forge it,\nand Caddy strips any client-supplied `X-Webauth-*` before this hop.",
+        "operationId": "forward_auth_auth_forward_auth_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForwardAuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Forward Auth",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/login": {
       "post": {
         "description": "Authenticate an email/password user and return a token pair.\n\nOn any failure (unknown email, wrong password, OAuth-only account, or a\ndeactivated account) the response is a single generic 401 so the endpoint\nnever reveals which emails are registered.",
@@ -2788,6 +2846,49 @@
           }
         },
         "summary": "Register",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/sso-cookie": {
+      "post": {
+        "description": "Mint a short-lived parent-domain SSO cookie from a valid app bearer.\n\nThe frontend calls this on a `/grafana` click (carrying its localStorage access\ntoken as a normal Bearer) so the *next* top-level browser navigation to a\nsibling subdomain (`isnad.{base}/grafana`) ships a credential Caddy's\n`forward_auth` can validate via `GET /auth/forward-auth`.\n\nAny authenticated user may mint \u2014 admin gating happens at forward-auth, not\nhere, so a non-admin still receives a cookie and is cleanly rejected (403) at\nthe Grafana edge rather than being unable to obtain a cookie at all. Roles are\nread authoritatively from the DB at mint time; the short TTL bounds staleness.",
+        "operationId": "issue_sso_cookie_auth_sso_cookie_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsoCookieResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Sso Cookie",
         "tags": [
           "auth"
         ]

@@ -40,6 +40,53 @@ def create_access_token(
     return token, expires_at
 
 
+def create_sso_token(
+    settings: Settings,
+    user_id: uuid.UUID,
+    email: str,
+    roles: list[str],
+    ttl_seconds: int,
+) -> tuple[str, datetime]:
+    """Create a short-lived RS256 SSO cookie token. Returns (token, expires_at).
+
+    Carries the user id (`sub`), email, and role names so the cookie-based
+    `GET /auth/forward-auth` gate (Caddy `forward_auth`, us#171 / deploy#458) can
+    authorize without a DB round-trip on every upstream request. Tagged
+    `type="sso"` and decoded only by ``decode_sso_token`` so an access token can
+    never be replayed as a forward-auth cookie, nor vice versa.
+    """
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(seconds=ttl_seconds)
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "email": email,
+        "roles": roles,
+        "iat": now,
+        "exp": expires_at,
+        "type": "sso",
+    }
+    private_key = get_private_key(settings)
+    token: str = jwt.encode(payload, private_key, algorithm=settings.JWT_ALGORITHM)
+    return token, expires_at
+
+
+def decode_sso_token(settings: Settings, token: str) -> dict[str, Any]:
+    """Decode and validate an SSO cookie token. Raises JWTError on failure.
+
+    Signature + expiry are verified by ``jwt.decode``; the explicit ``type`` check
+    rejects any non-SSO token (e.g. a leaked access token) presented as a cookie.
+    """
+    public_key = get_public_key(settings)
+    payload: dict[str, Any] = jwt.decode(
+        token,
+        public_key,
+        algorithms=[settings.JWT_ALGORITHM],
+    )
+    if payload.get("type") != "sso":
+        raise JWTError("Not an SSO token")
+    return payload
+
+
 def create_refresh_token() -> str:
     """Create a cryptographically random refresh token."""
     return secrets.token_urlsafe(48)
