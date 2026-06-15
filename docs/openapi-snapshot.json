@@ -140,6 +140,76 @@
         "title": "OAuthLoginResponse",
         "type": "object"
       },
+      "ProfilePreferences": {
+        "additionalProperties": true,
+        "description": "A user's preferences. Known keys are validated; extra keys pass through.\n\n``extra=\"allow\"`` keeps unrecognized keys, so the model both validates the\nwell-known prefs and serves as a transparent container for client-defined\nones.",
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 35,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "light",
+                  "dark",
+                  "system"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theme"
+          }
+        },
+        "title": "ProfilePreferences",
+        "type": "object"
+      },
+      "ProfileRead": {
+        "description": "The authenticated user's profile preferences.",
+        "properties": {
+          "preferences": {
+            "additionalProperties": true,
+            "title": "Preferences",
+            "type": "object"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "preferences"
+        ],
+        "title": "ProfileRead",
+        "type": "object"
+      },
+      "ProfileUpdate": {
+        "description": "Replace the authenticated user's preferences (PUT semantics).\n\nThe submitted ``preferences`` object replaces the stored one wholesale \u2014 a\nsettings page reads the full object and writes it back, so partial-merge\nsurprises are avoided.",
+        "properties": {
+          "preferences": {
+            "$ref": "#/components/schemas/ProfilePreferences"
+          }
+        },
+        "required": [
+          "preferences"
+        ],
+        "title": "ProfileUpdate",
+        "type": "object"
+      },
       "ProvidersResponse": {
         "description": "List of authentication methods the service supports + their enabled state.",
         "properties": {
@@ -1944,6 +2014,100 @@
           }
         },
         "summary": "Update Current User Profile",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/me/profile": {
+      "get": {
+        "description": "Return the authenticated user's preferences blob (own profile only).",
+        "operationId": "get_current_user_preferences_api_v1_users_me_profile_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Current User Preferences",
+        "tags": [
+          "users"
+        ]
+      },
+      "put": {
+        "description": "Replace the authenticated user's preferences wholesale (own profile only).",
+        "operationId": "replace_current_user_preferences_api_v1_users_me_profile_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace Current User Preferences",
         "tags": [
           "users"
         ]
