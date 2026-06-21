@@ -62,6 +62,27 @@ repos:
       - id: actionlint
         name: actionlint
 
+  # cspell mirrors docs.yml's `Spellcheck (cspell)` job so the sync-drift gate
+  # (which globs ALL workflows and now classifies the `cspell` kind — #684)
+  # stays green. New domain vocabulary then fails `pre-commit run` locally
+  # instead of only surfacing as a CI red after push. Pinned to v8.4.0 of
+  # cspell-cli to match the exact cspell the
+  # `streetsidesoftware/cspell-action@…v8.4.0` CI step bundles — same engine +
+  # dictionaries on both sides. `language: node`, so pre-commit provisions its
+  # own node/cspell env (no system cspell required).
+  #
+  # `files` is the regex equivalent of the CI action's authored-prose glob set
+  # (CLAUDE.md, docs/**/*.md, the team charter); `--config .cspell.json` reuses
+  # the same dictionaries + ignore rules CI loads, so a word that passes locally
+  # passes in CI and vice-versa.
+  - repo: https://github.com/streetsidesoftware/cspell-cli
+    rev: v8.4.0
+    hooks:
+      - id: cspell
+        name: cspell
+        args: ["--no-must-find-files", "--no-progress", "--no-summary", "--config", ".cspell.json"]
+        files: ^(CLAUDE\.md|docs/.*\.md|\.claude/team/charter\.md)$
+
   # Heavier checks run at pre-push (mirror CI's pytest job + the strict mypy from
   # `make check`). Run as `local`/`system` hooks via `uv run` so the pinned
   # tools from uv.lock are used and never drift from CI.
