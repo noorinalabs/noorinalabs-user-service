@@ -72,6 +72,10 @@ make migrate-down   # Rollback last migration
 - Dependency injection via FastAPI `Depends()` for auth, DB sessions, Redis
 - Pydantic v2 with frozen configs for all request/response schemas
 
+### Shell environment
+
+The development shell is **zsh** (not bash). Write zsh-safe terminal commands and avoid bash-only idioms (`declare -A`, `${!arr[@]}`, unquoted `?`/`*` globs such as `…?ref=main` URLs). Prefer POSIX-portable constructs; use `bash -c '...'` explicitly when bash is genuinely required. Canonical do/don't list: org `docs/TOOLCHAIN.md` "Shell environment" section + `ontology/conventions.md` in `noorinalabs-main`.
+
 ## Configuration
 
 Copy `.env.example` to `.env`. Key variables:
