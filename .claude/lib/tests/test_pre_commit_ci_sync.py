@@ -111,6 +111,62 @@ jobs:
         self.assertNotIn("ruff-lint", kinds)
 
 
+class CspellKindClassification(unittest.TestCase):
+    """The `cspell` kind closes the spell-check blind spot (noorinalabs-main#684):
+    docs.yml's `Spellcheck (cspell)` job must be classified so the drift gate
+    DEMANDS a pre-commit mirror, and the pre-commit `cspell` hook must classify
+    back to the same kind so the two sides compare equal."""
+
+    def test_ci_cspell_action_detected(self) -> None:
+        wf = """
+jobs:
+  spellcheck:
+    steps:
+      - name: cspell
+        uses: streetsidesoftware/cspell-action@de2a73e963e7443969755b648a1008f77033c5b2
+"""
+        self.assertIn("cspell", kinds_from_ci(wf))
+
+    def test_ci_cspell_cli_run_detected(self) -> None:
+        # A repo expressing the same gate as a CLI `run:` step must also classify.
+        wf = """
+jobs:
+  spellcheck:
+    steps:
+      - run: cspell --config .cspell.json "**/*.md"
+"""
+        self.assertIn("cspell", kinds_from_ci(wf))
+
+    def test_precommit_cspell_hook_detected(self) -> None:
+        cfg = """
+repos:
+  - repo: https://github.com/streetsidesoftware/cspell-cli
+    rev: v8.4.0
+    hooks:
+      - id: cspell
+        name: cspell
+"""
+        self.assertIn("cspell", kinds_from_precommit(cfg))
+
+    def test_cspell_mirror_no_drift(self) -> None:
+        # CI enforces cspell and pre-commit mirrors it -> no harmful drift.
+        harmful, stricter = compute_drift(
+            precommit_kinds={"cspell"},
+            ci_kinds={"cspell"},
+        )
+        self.assertEqual(harmful, set())
+        self.assertEqual(stricter, set())
+
+    def test_cspell_ci_only_is_harmful(self) -> None:
+        # CI enforces cspell but pre-commit does not -> the blind spot this fix
+        # closes is now a real drift signal.
+        harmful, _ = compute_drift(
+            precommit_kinds=set(),
+            ci_kinds={"cspell"},
+        )
+        self.assertIn("cspell", harmful)
+
+
 class DriftDirection(unittest.TestCase):
     def test_ci_enforced_not_local_is_harmful(self) -> None:
         harmful, stricter = compute_drift(
