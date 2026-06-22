@@ -25,7 +25,13 @@
 # (us#157). This digest ships 3.5.6-1~deb13u2, the Debian backport that fixes it.
 FROM python:3.12-slim@sha256:a39549e211a16149edf74e5fdc9ef03a6767e46cd987c5048b6659b6c9904c94 AS base
 
+# `apt-get -y upgrade` closes the *within-tag* package-drift failure mode the
+# digest pin alone cannot: the pinned manifest freezes the tag, but its OS
+# packages still accrue published CVEs between re-pins, so we upgrade to the
+# distro's current backports at build time (tech-decisions.md § Base Image
+# Pinning; enforced by .claude/lib/check_dockerfile_base_pin.py).
 RUN apt-get update && \
+    apt-get -y upgrade && \
     apt-get install -y --no-install-recommends gcc libpq-dev && \
     rm -rf /var/lib/apt/lists/*
 

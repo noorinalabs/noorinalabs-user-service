@@ -167,6 +167,47 @@ repos:
         self.assertIn("cspell", harmful)
 
 
+class DockerfileBasePinKindClassification(unittest.TestCase):
+    """The `dockerfile-base-pin` kind (noorinalabs-main#735, rolled out by #744)
+    must classify from BOTH sides — the CI `run:` step and the pre-commit hook
+    id — so the drift gate DEMANDS the mirror and the two sides compare equal."""
+
+    def test_ci_base_pin_run_step_detected(self) -> None:
+        wf = """
+jobs:
+  dockerfile-base-pin:
+    steps:
+      - run: python3 .claude/lib/check_dockerfile_base_pin.py Dockerfile
+"""
+        self.assertIn("dockerfile-base-pin", kinds_from_ci(wf))
+
+    def test_precommit_base_pin_hook_detected(self) -> None:
+        cfg = """
+repos:
+  - repo: local
+    hooks:
+      - id: dockerfile-base-pin
+        name: dockerfile-base-pin
+        entry: python3 .claude/lib/check_dockerfile_base_pin.py
+"""
+        self.assertIn("dockerfile-base-pin", kinds_from_precommit(cfg))
+
+    def test_base_pin_mirror_no_drift(self) -> None:
+        harmful, stricter = compute_drift(
+            precommit_kinds={"dockerfile-base-pin"},
+            ci_kinds={"dockerfile-base-pin"},
+        )
+        self.assertEqual(harmful, set())
+        self.assertEqual(stricter, set())
+
+    def test_base_pin_ci_only_is_harmful(self) -> None:
+        harmful, _ = compute_drift(
+            precommit_kinds=set(),
+            ci_kinds={"dockerfile-base-pin"},
+        )
+        self.assertIn("dockerfile-base-pin", harmful)
+
+
 class DriftDirection(unittest.TestCase):
     def test_ci_enforced_not_local_is_harmful(self) -> None:
         harmful, stricter = compute_drift(
