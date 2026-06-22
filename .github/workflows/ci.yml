@@ -19,6 +19,30 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest
 
+  pg-container-tests:
+    name: Postgres container tests (RUN_PG_CONTAINER_TESTS)
+    # The real-Postgres container tests (testcontainers + Docker) gated behind
+    # RUN_PG_CONTAINER_TESTS=1 run NOWHERE in the default `check` job — it leaves
+    # the flag unset so they skip (kept fast/deterministic). This job is their
+    # automated home (#187): GitHub-hosted ubuntu runners ship a Docker daemon,
+    # so testcontainers can start its own throwaway `postgres:16-alpine` — no
+    # `services:` block needed. The tests still degrade to a SKIP (never a red
+    # build) if Docker is unavailable, so this job is a strict superset of value.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --extra dev
+      - name: Run real-Postgres container tests
+        env:
+          RUN_PG_CONTAINER_TESTS: "1"
+          ENVIRONMENT: test
+        run: >-
+          uv run pytest
+          tests/test_bootstrap_admin.py
+          tests/test_oauth_account_linking_guard_pg.py
+          -v
+
   openapi-snapshot-drift:
     runs-on: ubuntu-latest
     steps:
