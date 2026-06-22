@@ -19,6 +19,30 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest
 
+  pg-container-tests:
+    name: Postgres container tests (RUN_PG_CONTAINER_TESTS)
+    # The real-Postgres container tests (testcontainers + Docker) gated behind
+    # RUN_PG_CONTAINER_TESTS=1 run NOWHERE in the default `check` job — it leaves
+    # the flag unset so they skip (kept fast/deterministic). This job is their
+    # automated home (#187): GitHub-hosted ubuntu runners ship a Docker daemon,
+    # so testcontainers can start its own throwaway `postgres:16-alpine` — no
+    # `services:` block needed. The tests still degrade to a SKIP (never a red
+    # build) if Docker is unavailable, so this job is a strict superset of value.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --extra dev
+      - name: Run real-Postgres container tests
+        env:
+          RUN_PG_CONTAINER_TESTS: "1"
+          ENVIRONMENT: test
+        run: >-
+          uv run pytest
+          tests/test_bootstrap_admin.py
+          tests/test_oauth_account_linking_guard_pg.py
+          -v
+
   openapi-snapshot-drift:
     runs-on: ubuntu-latest
     steps:
@@ -30,6 +54,21 @@ jobs:
       - name: Check for drift
         run: git diff --exit-code docs/openapi-snapshot.json
 
+  dockerfile-base-pin:
+    name: Dockerfile base-image pin gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Enforce Base Image Pinning (tech-decisions.md § Base Image Pinning, #735/#744)
+        # Every Dockerfile FROM must be digest-pinned AND carry the matching
+        # distro upgrade. The checker is stdlib-only (no deps to install). This
+        # job mirrors the `dockerfile-base-pin` pre-commit hook; the sync-drift
+        # gate classifies the kind so the two sides cannot drift apart.
+        run: python3 .claude/lib/check_dockerfile_base_pin.py Dockerfile
+
   precommit-ci-sync:
     name: Pre-commit ⇄ CI sync-drift gate
     runs-on: ubuntu-latest
@@ -38,6 +77,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Run .claude/lib unit tests
+        # Exercise the reusable charter-enforcement libs (pre_commit_ci_sync.py,
+        # check_dockerfile_base_pin.py) and their tests. unittest-based + stdlib
+        # only, so no dependency install is needed. testpaths=["tests"] in
+        # pyproject excludes .claude from the app `check` job, so this is their
+        # dedicated CI home (closes the pre-existing gap that they ran nowhere).
+        run: python3 -m unittest discover -s .claude/lib/tests -p 'test_*.py'
       - name: Verify pre-commit config mirrors CI-enforced checks (#327)
         # Fails if a check the QUALITY-GATE CI workflows enforce
         # (ruff/mypy/pytest/actionlint/…) is missing from .pre-commit-config.yaml,

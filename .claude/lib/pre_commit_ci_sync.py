@@ -24,7 +24,7 @@ kind tokens so they compare:
 
     ruff-lint, ruff-format, mypy, pytest, eslint, typescript, prettier,
     terraform-fmt, gitleaks, actionlint, astro-check, pip-audit, build,
-    cspell
+    cspell, dockerfile-base-pin
 
 Unknown tools are ignored (neither side gates on a kind we can't classify),
 which keeps the gate conservative — it never fails on something it doesn't
@@ -76,6 +76,14 @@ _KIND_PATTERNS: dict[str, tuple[str, ...]] = {
     # Patterns cover the action ref, the bundled-CLI step name, and the generic
     # job/step word.
     "cspell": ("cspell", "spellcheck", "streetsidesoftware/cspell"),
+    # `dockerfile-base-pin` is the charter-prose→code gate built in
+    # noorinalabs-main#735 and rolled out to this image-building repo via #744:
+    # a `.claude/lib/check_dockerfile_base_pin.py` invoked identically by a CI
+    # step and a pre-commit hook. Classifying it makes the drift gate DEMAND the
+    # pre-commit mirror (the #684 contract: an un-classified CI check is a silent
+    # blind spot). Patterns match the script basename (present on both sides'
+    # invoke line) and the hook id / job name.
+    "dockerfile-base-pin": ("check_dockerfile_base_pin", "dockerfile-base-pin"),
 }
 
 # `ruff-lint` is a substring of nothing problematic, but `ruff format` also
