@@ -10,6 +10,7 @@ dev:
 setup-hooks:
 	@echo "Git hooks are enforced via Claude Code org-level hooks."
 	@echo "See .claude/team/charter.md § Automated Enforcement."
+	python3 scripts/structural_ontology.py register-merge-driver
 
 # Infrastructure
 infra:

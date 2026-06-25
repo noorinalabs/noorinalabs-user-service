@@ -94,6 +94,12 @@ jobs:
         # gate stays green. ghcr-publish.yml is EXCLUDED: it is a release-time
         # container build/push (its `docker build` is not a local fast-feedback
         # check pre-commit should mirror), unlike the parent/landing repos whose
-        # only workflows are quality gates. This is the user-service-specific
-        # deviation from a bare unscoped `.` invocation.
-        run: python3 .claude/lib/pre_commit_ci_sync.py . --ci .github/workflows/ci.yml --ci .github/workflows/docs.yml
+        # only workflows are quality gates. structural-ontology.yml IS included:
+        # it is a quality gate (staleness check), so its `structural-ontology`
+        # kind MUST be mirrored in pre-commit (#684 parity contract). This is the
+        # user-service-specific deviation from a bare unscoped `.` invocation.
+        run: >-
+          python3 .claude/lib/pre_commit_ci_sync.py .
+          --ci .github/workflows/ci.yml
+          --ci .github/workflows/docs.yml
+          --ci .github/workflows/structural-ontology.yml

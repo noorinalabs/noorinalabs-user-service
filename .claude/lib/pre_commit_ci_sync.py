@@ -24,7 +24,7 @@ kind tokens so they compare:
 
     ruff-lint, ruff-format, mypy, pytest, eslint, typescript, prettier,
     terraform-fmt, gitleaks, actionlint, astro-check, pip-audit, build,
-    cspell, dockerfile-base-pin
+    cspell, dockerfile-base-pin, structural-ontology
 
 Unknown tools are ignored (neither side gates on a kind we can't classify),
 which keeps the gate conservative — it never fails on something it doesn't
@@ -84,6 +84,18 @@ _KIND_PATTERNS: dict[str, tuple[str, ...]] = {
     # blind spot). Patterns match the script basename (present on both sides'
     # invoke line) and the hook id / job name.
     "dockerfile-base-pin": ("check_dockerfile_base_pin", "dockerfile-base-pin"),
+    # `structural-ontology` is the CxT2 per-repo structural index staleness gate
+    # (noorinalabs-main#820/#855, wired here by noorinalabs-user-service#194).
+    # CI enforces it via the `structural-ontology` workflow (a dedicated job that
+    # sibling-checks-out the generator and runs `scripts/structural_ontology.py
+    # check --require-generator`). Classifying it makes the drift gate DEMAND the
+    # pre-commit mirror (the #684 contract). Patterns match the script basename +
+    # the hook id / workflow/job name on both sides.
+    "structural-ontology": (
+        "structural_ontology",
+        "structural-ontology",
+        "structural-ontology-staleness",
+    ),
 }
 
 # `ruff-lint` is a substring of nothing problematic, but `ruff format` also
