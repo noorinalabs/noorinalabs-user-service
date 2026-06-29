@@ -54,3 +54,10 @@ openapi-snapshot:
 # Override the target via BOOTSTRAP_ADMIN_EMAIL (default parametrization@gmail.com).
 bootstrap-admin:
 	uv run python scripts/bootstrap_admin.py
+
+# Bootstrap: idempotently seed the NON-ADMIN email/password test account used to
+# drive the UI in QA. Credentials come from TEST_USER_EMAIL / TEST_USER_PASSWORD
+# (per-env). Unlike bootstrap-admin this CREATES the account from credentials, so
+# it is re-seeded automatically on every deploy and survives a user-DB wipe.
+bootstrap-test-user:
+	uv run python scripts/bootstrap_test_user.py
