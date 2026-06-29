@@ -65,7 +65,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.app.models.role import Role, UserRole
 from src.app.models.user import User
-from src.app.utils.crypto import hash_password, verify_password
+from src.app.utils.crypto import MAX_PASSWORD_BYTES, hash_password, verify_password
 
 log = logging.getLogger("bootstrap_test_user")
 
@@ -104,6 +104,14 @@ async def seed_test_user(
     """
     if role_name == "admin":
         msg = "Refusing to grant 'admin' to a test account — use bootstrap_admin.py."
+        raise BootstrapError(msg)
+
+    # bcrypt (4.1+) raises on inputs beyond 72 bytes rather than silently
+    # truncating. Reject early with a clear diagnostic — matching the
+    # /auth/register guard — so an over-long operator-set TEST_USER_PASSWORD is a
+    # legible config error, not an opaque bcrypt crash mid-seed.
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        msg = f"TEST_USER_PASSWORD must not exceed {MAX_PASSWORD_BYTES} bytes (bcrypt limit)."
         raise BootstrapError(msg)
 
     role = (await db.execute(select(Role).where(Role.name == role_name))).scalar_one_or_none()

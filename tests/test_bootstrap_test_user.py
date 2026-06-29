@@ -152,6 +152,16 @@ class TestSeedTestUser:
         assert await _user_by_email(db_session, "qa@example.com") is None
 
     @pytest.mark.asyncio
+    async def test_rejects_overlong_password(self, db_session: AsyncSession) -> None:
+        await _seed_roles(db_session)
+        with pytest.raises(BootstrapError, match="72 bytes"):
+            await seed_test_user(
+                db_session, email="qa@example.com", password="x" * 73, role_name="reader"
+            )
+        # Nothing created from the rejected call.
+        assert await _user_by_email(db_session, "qa@example.com") is None
+
+    @pytest.mark.asyncio
     async def test_raises_when_role_missing(self, db_session: AsyncSession) -> None:
         # roles table empty → unmigrated DB
         with pytest.raises(BootstrapError, match="reader"):
