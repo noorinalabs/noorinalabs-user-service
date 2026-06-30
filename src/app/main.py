@@ -9,6 +9,7 @@ from src.app.database import close_db, close_redis, init_db, init_redis
 from src.app.middleware.cors import add_cors_middleware
 from src.app.middleware.security import add_security_headers
 from src.app.routers import (
+    audit,
     auth,
     health,
     roles,
@@ -78,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(verification.router)
     application.include_router(subscriptions.router)
     application.include_router(totp.router)
+    application.include_router(audit.router)
 
     return application
 

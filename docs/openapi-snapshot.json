@@ -1,6 +1,136 @@
 {
   "components": {
     "schemas": {
+      "AuditLogCreate": {
+        "description": "Body for ``POST /api/v1/audit`` \u2014 a single audit entry to record.",
+        "properties": {
+          "action": {
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "actor_name": {
+            "default": "",
+            "title": "Actor Name",
+            "type": "string"
+          },
+          "details": {
+            "default": "",
+            "title": "Details",
+            "type": "string"
+          },
+          "target_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target User Id"
+          }
+        },
+        "required": [
+          "action",
+          "actor_id"
+        ],
+        "title": "AuditLogCreate",
+        "type": "object"
+      },
+      "AuditLogListResponse": {
+        "description": "Offset-paginated envelope for ``GET /api/v1/audit``.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditLogRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "title": "AuditLogListResponse",
+        "type": "object"
+      },
+      "AuditLogRead": {
+        "description": "A single persisted audit entry (response shape).",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "actor_name": {
+            "title": "Actor Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "details": {
+            "title": "Details",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "target_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target User Id"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "actor_id",
+          "actor_name",
+          "target_user_id",
+          "details",
+          "created_at"
+        ],
+        "title": "AuditLogRead",
+        "type": "object"
+      },
       "AuthProviderInfo": {
         "description": "A single available authentication method for `GET /auth/providers`.",
         "properties": {
@@ -1375,6 +1505,139 @@
         "summary": "Totp Verify",
         "tags": [
           "2fa"
+        ]
+      }
+    },
+    "/api/v1/audit": {
+      "get": {
+        "description": "List audit entries newest-first, offset-paginated (admin only).",
+        "operationId": "list_audit_entries_api_v1_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Audit Entries",
+        "tags": [
+          "audit"
+        ]
+      },
+      "post": {
+        "description": "Record a single audit entry (admin only).",
+        "operationId": "create_audit_entry_api_v1_audit_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditLogCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Audit Entry",
+        "tags": [
+          "audit"
         ]
       }
     },
