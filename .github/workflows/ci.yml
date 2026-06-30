@@ -41,6 +41,7 @@ jobs:
           uv run pytest
           tests/test_bootstrap_admin.py
           tests/test_oauth_account_linking_guard_pg.py
+          tests/test_audit.py
           -v
 
   openapi-snapshot-drift:

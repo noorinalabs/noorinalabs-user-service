@@ -1,5 +1,6 @@
 """Import all models so Alembic autogenerate discovers them."""
 
+import src.app.models.audit_log
 import src.app.models.oauth_account
 import src.app.models.role
 import src.app.models.session

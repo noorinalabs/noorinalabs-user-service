@@ -12,6 +12,7 @@ each Phase 3 issue has a reserved range:
 | 0040      | US #63 | Merge multi-heads     |
 | 0041      | US #54 | subscriptions.user_id index (tech-debt) |
 | 0042      | US #165 | users.preferences JSONB column |
+| 0043      | US #200 | audit_log table (cross-repo relocation, isnad-graph#1140) |
 
 Name your migration files with the appropriate prefix, e.g.:
 `0010_add_verification_tokens.py` for US #8.
