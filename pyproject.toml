@@ -20,6 +20,11 @@ dependencies = [
     "pydantic[email]>=2.10.0",
     "pydantic-settings>=2.6.0",
     "python-jose[cryptography]>=3.3.0",
+    # pyasn1 is transitive via python-jose[cryptography] -> rsa/ecdsa -> pyasn1.
+    # Pin a floor to pull the fix for CVE-2026-59885 / CVE-2026-59886 (HIGH — DoS
+    # via crafted ASN.1), which Trivy gates the image publish on. Mirrors the
+    # isnad-ingest-platform #149 remediation of the same advisory.
+    "pyasn1>=0.6.4",
     "bcrypt>=4.1.0",
     "httpx>=0.28.0",
     "redis>=5.2.0",
