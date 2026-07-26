@@ -3201,17 +3201,24 @@
     },
     "/auth/token/refresh": {
       "post": {
-        "description": "Exchange a refresh token for a new access token (with rotation).",
+        "description": "Exchange a refresh token for a new access token (with rotation).\n\nThe refresh token is read from the httpOnly ``refresh_token`` cookie first \u2014\nbrowser (OAuth) clients hold it ONLY there and cannot put it in the JSON body\n(#68). The optional body is a fallback for non-browser / direct-API callers\nthat present the token explicitly. Reading the cookie is what makes the\ncookie-based frontend work at all: it always sent an empty body and got a 422\nbecause the handler used to require ``body.refresh_token`` (a frontend\u2194backend\ncontract drift that silently broke every browser refresh).",
         "operationId": "refresh_token_auth_token_refresh_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RefreshRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {

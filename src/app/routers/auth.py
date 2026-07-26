@@ -93,6 +93,36 @@ RateLimitRedisDep = Annotated[Redis | None, Depends(get_redis_optional)]
 AUTH_CODE_PREFIX = "auth_code:"
 AUTH_CODE_TTL_SECONDS = 60
 
+# Refresh-token cookie. Browser (OAuth) clients hold the refresh token ONLY as
+# this httpOnly cookie — JS cannot read it (#68), so it can never travel in a
+# request body. The OAuth callback sets it and POST /auth/token/refresh reads +
+# rotates it. Name/path/attributes are centralised in `_set_refresh_cookie` so
+# the set-side and read-side never drift (that drift silently killed cookie-based
+# refresh: the frontend sent an empty body and always got 422).
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/auth"
+
+
+def _set_refresh_cookie(response: Response, settings: Settings, refresh_token: str) -> None:
+    """Persist the refresh token as an httpOnly, SameSite=Lax cookie scoped to
+    ``/auth``.
+
+    SameSite=Lax is required so the cookie survives the cross-site redirect from
+    the OAuth provider back to us (Strict drops it on the first hop); it also
+    blocks cross-site POST, which is the refresh endpoint's CSRF guard. The
+    Secure flag is env-gated for local HTTP dev.
+    """
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+        httponly=True,
+        secure=settings.AUTH_OAUTH_REFRESH_COOKIE_SECURE,
+        samesite="lax",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
 # Redis key prefix for in-flight OAuth state (CSRF + PKCE verifier)
 OAUTH_STATE_PREFIX = "oauth_state:"
 
@@ -357,18 +387,37 @@ async def issue_token(
 
 @router.post("/token/refresh", response_model=TokenResponse, status_code=status.HTTP_200_OK)
 async def refresh_token(
-    body: RefreshRequest,
     request: Request,
+    response: Response,
     settings: SettingsDep,
     db: DbDep,
     rl_redis: RateLimitRedisDep,
+    body: RefreshRequest | None = None,
 ) -> TokenResponse:
-    """Exchange a refresh token for a new access token (with rotation)."""
+    """Exchange a refresh token for a new access token (with rotation).
+
+    The refresh token is read from the httpOnly ``refresh_token`` cookie first —
+    browser (OAuth) clients hold it ONLY there and cannot put it in the JSON body
+    (#68). The optional body is a fallback for non-browser / direct-API callers
+    that present the token explicitly. Reading the cookie is what makes the
+    cookie-based frontend work at all: it always sent an empty body and got a 422
+    because the handler used to require ``body.refresh_token`` (a frontend↔backend
+    contract drift that silently broke every browser refresh).
+    """
     # Rate-limit by IP before touching the token store — blocks a single host
     # from hammering refresh/rotation regardless of which token it presents.
     await enforce_ip_rate_limit(request, rl_redis, settings, bucket="refresh")
 
-    session = await validate_refresh_token(db, body.refresh_token)
+    presented_token = request.cookies.get(REFRESH_COOKIE_NAME) or (
+        body.refresh_token if body else None
+    )
+    if not presented_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing refresh token",
+        )
+
+    session = await validate_refresh_token(db, presented_token)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -385,7 +434,7 @@ async def refresh_token(
     )
 
     # Rotate: revoke old, issue new
-    await revoke_refresh_token(db, body.refresh_token)
+    await revoke_refresh_token(db, presented_token)
 
     user_result = await db.execute(select(User).where(User.id == session.user_id))
     user = user_result.scalar_one_or_none()
@@ -423,6 +472,10 @@ async def refresh_token(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    # Rotate the cookie so the next refresh presents the freshly-minted token —
+    # the one just read was revoked above. Without this the httpOnly cookie goes
+    # stale after a single refresh and the following refresh 401s.
+    _set_refresh_cookie(response, settings, new_refresh)
     expires_in = int((expires_at - datetime.now(UTC)).total_seconds())
     return TokenResponse(
         access_token=access_token,
@@ -904,17 +957,5 @@ async def oauth_callback_get(
         fragment_params={"token": access_token},
     )
     response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
-
-    # Refresh-token cookie: httpOnly + SameSite=Lax (Lax is required so the cookie
-    # survives the cross-site redirect from the OAuth provider back to us; Strict
-    # would drop it on the first hop). Secure flag is env-gated for local HTTP dev.
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
-        httponly=True,
-        secure=settings.AUTH_OAUTH_REFRESH_COOKIE_SECURE,
-        samesite="lax",
-        path="/auth",
-    )
+    _set_refresh_cookie(response, settings, refresh_token)
     return response
