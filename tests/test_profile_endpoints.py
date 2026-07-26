@@ -40,7 +40,7 @@ TEST_PUBLIC_PEM = (
 
 
 def _make_token(user_id: uuid.UUID) -> str:
-    payload = {"sub": str(user_id), "exp": datetime.now(UTC) + timedelta(hours=1)}
+    payload = {"sub": str(user_id), "exp": datetime.now(UTC) + timedelta(hours=1), "type": "access"}
     return jwt.encode(payload, TEST_PRIVATE_PEM, algorithm="RS256")
 
 

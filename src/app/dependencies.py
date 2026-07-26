@@ -5,7 +5,7 @@ from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
-from jose import JWTError, jwt
+from jose import JWTError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,7 @@ from src.app.config import Settings, get_settings
 from src.app.database import get_db_session, get_redis
 from src.app.models.user import User
 from src.app.services.rbac import get_user_role_names, load_user_with_roles, user_has_minimum_role
+from src.app.services.token import decode_access_token
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbDep = Annotated[AsyncSession, Depends(get_db_session)]
@@ -39,7 +40,7 @@ async def get_current_user(
         )
 
     try:
-        payload = jwt.decode(token, settings.JWT_PUBLIC_KEY, algorithms=["RS256"])
+        payload = decode_access_token(settings, token)
     except JWTError as err:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
