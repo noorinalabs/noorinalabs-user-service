@@ -42,7 +42,7 @@ def _make_token(
     expires_delta: timedelta | None = None,
 ) -> str:
     exp = datetime.now(UTC) + (expires_delta or timedelta(hours=1))
-    payload = {"sub": str(user_id), "exp": exp}
+    payload = {"sub": str(user_id), "exp": exp, "type": "access"}
     if roles:
         payload["roles"] = roles  # type: ignore[assignment]
     return jwt.encode(payload, TEST_PRIVATE_PEM, algorithm="RS256")

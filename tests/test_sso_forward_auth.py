@@ -254,6 +254,20 @@ class TestMintSsoCookie:
         resp = await client.post("/auth/sso-cookie", headers={"Authorization": "Bearer not-a-jwt"})
         assert resp.status_code == 401
 
+    @pytest.mark.asyncio
+    async def test_sso_token_rejected_as_bearer(
+        self, client: AsyncClient, admin_user: User
+    ) -> None:
+        # BUG-01 / us#204: a type="sso" cookie token minted for a real, active
+        # user must not be replayable as a Bearer access token. Signature and
+        # user lookup both pass; only the type claim distinguishes it, so
+        # get_current_user must reject via decode_access_token's type check (401).
+        sso_token = _sso_cookie_token(user_id=admin_user.id, roles=["admin"], token_type="sso")
+        resp = await client.post(
+            "/auth/sso-cookie", headers={"Authorization": f"Bearer {sso_token}"}
+        )
+        assert resp.status_code == 401
+
 
 # --- Forward-auth gate -------------------------------------------------------
 
