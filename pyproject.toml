@@ -30,10 +30,22 @@ dependencies = [
     "redis>=5.2.0",
     "python-multipart>=0.0.30",  # CVE-2026-53539 (HIGH) — quadratic-time querystring parsing (ReDoS), fixed 0.0.30
     "email-validator>=2.1.0",
-    "aiosmtplib>=3.0.0",
+    # PYSEC-2026-2338 (fixed 5.1.1) and PYSEC-2026-3805 (fixed 5.1.2). Trivy
+    # gates the image publish on both.
+    "aiosmtplib>=5.1.2",
     "pyotp>=2.9.0",
-    "cryptography>=48.0.1",
+    # PYSEC-2026-3552 — Bleichenbacher oracle in pkcs7_decrypt_*, fixed in
+    # 50.0.0. Transitive via python-jose[cryptography]; Trivy gates on it.
+    "cryptography>=50.0.0",
     "prometheus-fastapi-instrumentator>=7.0.0",
+    # anyio is transitive via starlette/httpx. Pin a direct floor to clear
+    # CVE-2026-63374 (IDNA 2003 certificate confusion in connect_tcp/TLSStream
+    # .wrap) and CVE-2026-64847 (undrained worker stderr wedges the process
+    # pool), both fixed in 4.14.2.
+    "anyio>=4.14.2",
+    # click is transitive via uvicorn[standard]. Pin a direct floor to clear
+    # PYSEC-2026-2132 (command injection in click.edit()), fixed in 8.3.3.
+    "click>=8.3.3",
 ]
 
 [project.optional-dependencies]
