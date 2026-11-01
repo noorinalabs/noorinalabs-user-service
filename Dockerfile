@@ -23,7 +23,7 @@
 # carried openssl/libssl3t64 3.5.6-1~deb13u1, vulnerable to CVE-2026-45447 (HIGH),
 # which began tripping ghcr-publish's Trivy gate on every PR once disclosed
 # (us#157). This digest ships 3.5.6-1~deb13u2, the Debian backport that fixes it.
-FROM python:3.12-slim@sha256:a39549e211a16149edf74e5fdc9ef03a6767e46cd987c5048b6659b6c9904c94 AS base
+FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913 AS base
 
 # `apt-get -y upgrade` closes the *within-tag* package-drift failure mode the
 # digest pin alone cannot: the pinned manifest freezes the tag, but its OS
